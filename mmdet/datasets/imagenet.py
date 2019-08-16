@@ -1,0 +1,23 @@
+import numpy as np
+
+from .custom import CustomDataset
+from .registry import DATASETS
+
+
+@DATASETS.register_module
+class ImageNetDETVIDDataset(CustomDataset):
+
+    CLASSES = ('airplane','antelope','bear','bicycle','bird','bus',
+               'car','cattle','dog','domestic_cat','elephant','fox',
+               'giant_panda','hamster','horse','lion','lizard','monkey',
+               'motorcycle','rabbit','red_panda','sheep','snake','squirrel',
+               'tiger','train','turtle','watercraft','whale','zebra')
+
+    def get_ann_info(self, idx):
+        ann = self.img_infos[idx]['ann']
+        # modify type if necessary.
+        if isinstance(ann['bboxes'], list):
+            ann['bboxes'] = np.array(ann['bboxes'], dtype=np.float32)
+        if isinstance(ann['labels'], list):
+            ann['labels'] = np.array(ann['labels'], dtype=np.int64)
+        return ann
