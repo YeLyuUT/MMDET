@@ -17,7 +17,7 @@ class ImageNetDETVIDDataset(CustomDataset):
         ann = self.img_infos[idx]['ann']
         # modify type if necessary.
         if isinstance(ann['bboxes'], list):
-            ann['bboxes'] = np.array(ann['bboxes'], dtype=np.float32)
+            ann['bboxes'] = np.array(ann['bboxes'], dtype=np.float32).reshape(-1, 4)
         if isinstance(ann['labels'], list):
-            ann['labels'] = np.array(ann['labels'], dtype=np.int64)
+            ann['labels'] = np.array(ann['labels'], dtype=np.int64).reshape(-1, 1)
         return ann
