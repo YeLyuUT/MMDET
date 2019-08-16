@@ -3,7 +3,6 @@ import torch
 from ..bbox import PseudoSampler, assign_and_sample, bbox2delta, build_assigner
 from ..utils import multi_apply
 
-
 def anchor_target(anchor_list,
                   valid_flag_list,
                   gt_bboxes_list,

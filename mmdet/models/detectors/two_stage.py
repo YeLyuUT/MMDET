@@ -96,7 +96,7 @@ class TwoStageDetector(BaseDetector, RPNTestMixin, BBoxTestMixin,
                       gt_masks=None,
                       proposals=None):
         x = self.extract_feat(img)
-
+        
         losses = dict()
 
         # RPN forward and loss

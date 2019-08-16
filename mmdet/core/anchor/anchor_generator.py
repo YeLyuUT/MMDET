@@ -82,5 +82,5 @@ class AnchorGenerator(object):
         valid_xx, valid_yy = self._meshgrid(valid_x, valid_y)
         valid = valid_xx & valid_yy
         valid = valid[:, None].expand(
-            valid.size(0), self.num_base_anchors).contiguous().view(-1)
+            valid.size(0), self.num_base_anchors).contiguous().view(-1)#.type(torch.cuda.BoolTensor)
         return valid

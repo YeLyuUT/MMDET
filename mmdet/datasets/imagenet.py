@@ -16,8 +16,9 @@ class ImageNetDETVIDDataset(CustomDataset):
     def get_ann_info(self, idx):
         ann = self.img_infos[idx]['ann']
         # modify type if necessary.
-        if isinstance(ann['bboxes'], list):
+        if not isinstance(ann['bboxes'],np.ndarray):
             ann['bboxes'] = np.array(ann['bboxes'], dtype=np.float32).reshape(-1, 4)
-        if isinstance(ann['labels'], list):
-            ann['labels'] = np.array(ann['labels'], dtype=np.int64).reshape(-1, 1)
+        if not isinstance(ann['labels'], np.ndarray):
+            ann['labels'] = np.array(ann['labels'], dtype=np.int64)#.reshape(-1, 1)
+        self.img_infos[idx]['ann']=ann
         return ann

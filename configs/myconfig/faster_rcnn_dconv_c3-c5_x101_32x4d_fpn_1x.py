@@ -111,11 +111,11 @@ data_root = 'data/imagenet/'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 data = dict(
-    imgs_per_gpu=2,
-    workers_per_gpu=2,
+    imgs_per_gpu=3,
+    workers_per_gpu=5,
     train=dict(
         type=dataset_type,
-        ann_file=data_root + 'ImageSets/trainr_DETVID.json',
+        ann_file=data_root + 'ImageSets/trainr_DETVID_no_empty_box.json',
         img_prefix=data_root,
         img_scale=(1333, 800),
         img_norm_cfg=img_norm_cfg,
