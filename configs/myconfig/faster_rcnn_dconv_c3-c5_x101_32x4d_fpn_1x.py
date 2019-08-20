@@ -16,7 +16,7 @@ model = dict(
             groups=32,
             deformable_groups=1,
             fallback_on_stride=False),
-        stage_with_dcn=(False, True, True, True)),
+        stage_with_dcn=(False, False, False, False)),
     neck=dict(
         type='FPN',
         in_channels=[256, 512, 1024, 2048],
@@ -111,7 +111,7 @@ data_root = 'data/imagenet/'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 data = dict(
-    imgs_per_gpu=3,
+    imgs_per_gpu=2,
     workers_per_gpu=5,
     train=dict(
         type=dataset_type,
