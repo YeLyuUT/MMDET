@@ -12,6 +12,11 @@ class ImageNetDETVIDDataset(CustomDataset):
                'giant_panda','hamster','horse','lion','lizard','monkey',
                'motorcycle','rabbit','red_panda','sheep','snake','squirrel',
                'tiger','train','turtle','watercraft','whale','zebra')
+    
+    def __init__(self,*args,**kargs):
+      super().__init__(*args,**kargs)
+      self.img_ids = list(range(len(self.img_infos)))
+      self.cat_ids = list(range(len(self.CLASSES)))
 
     def get_ann_info(self, idx):
         ann = self.img_infos[idx]['ann']
