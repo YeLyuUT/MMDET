@@ -64,3 +64,8 @@ at::Tensor top_grad, at::Tensor rois, at::Tensor bottom_grad, at::Tensor mapping
     pooled_width, pooled_height, output_dim, bottom_grad);
     return 1;
 }
+
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+  m.def("forward", &psroi_pooling_forward_cuda, "PSRoi_Pooling forward (CUDA)");
+  m.def("backward", &psroi_pooling_backward_cuda, "PSRoi_Pooling backward (CUDA)");
+}
