@@ -21,8 +21,7 @@ class PSRoIPoolingFunction(Function):
         mappingchannel = features.new_zeros(out_size, dtype=torch.int32)
         group_size = out_h
         psroi_pool_cuda.forward(out_h, out_w, spatial_scale, group_size, output_dim, features, rois,
-                                                 output,
-                                                 mappingchannel)
+                                                 output, mappingchannel)
         feature_size = features.size()
         ctx.save_for_backward(rois, mappingchannel)
         ctx.feature_size = feature_size
@@ -60,4 +59,32 @@ class PSRoIPool(nn.Module):
         format_str = self.__class__.__name__
         format_str += '(out_size={}, spatial_scale={}'.format(
             self.out_size, self.spatial_scale)
+        return format_str
+
+class PSRoIPoolAfterPointwiseConv(nn.Module):
+    def __init__(self, in_channels, out_channels_cls, out_channels_box, out_size, spatial_scale):
+        super(PSRoIPoolAfterPointwiseConv, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels_cls = out_channels_cls
+        self.out_channels_box = out_channels_box
+        self.ps_pool = PSRoIPool(out_size, spatial_scale)
+        self.pointWiseConv_cls = nn.Conv2d(self.in_channels, self.out_channels_cls, kernel_size=1, stride=1)
+        self.pointWiseConv_box = nn.Conv2d(self.in_channels, self.out_channels_box, kernel_size=1, stride=1)
+        self.init_weights()
+
+    def init_weights(self):
+        nn.init.normal_(self.pointWiseConv_cls.weight, 0, 0.01)
+        nn.init.constant_(self.pointWiseConv_cls.bias, 0)
+        nn.init.normal_(self.pointWiseConv_box.weight, 0, 0.001)
+        nn.init.constant_(self.pointWiseConv_box.bias, 0)
+
+    def forward(self, features, rois):
+        features_cls = self.pointWiseConv_cls(features)
+        features_box = self.pointWiseConv_box(features)
+        return self.ps_pool(features_cls, rois), self.ps_pool(features_box, rois)
+
+    def __repr__(self):
+        format_str = self.__class__.__name__
+        format_str += '(in_channels={}, out_channels_cls={}, out_channels_box={}, out_size={}, spatial_scale={}'.format(
+            self.in_channels, self.out_channels_cls, self.out_channels_box, self.out_size, self.spatial_scale)
         return format_str
