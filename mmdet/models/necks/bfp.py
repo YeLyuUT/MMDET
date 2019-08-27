@@ -33,6 +33,7 @@ class BFP(nn.Module):
                  num_levels,
                  refine_level=2,
                  refine_type=None,
+                 output_single_lvl=False,
                  conv_cfg=None,
                  norm_cfg=None):
         super(BFP, self).__init__()
@@ -42,6 +43,7 @@ class BFP(nn.Module):
         self.num_levels = num_levels
         self.conv_cfg = conv_cfg
         self.norm_cfg = norm_cfg
+        self.output_single_lvl = output_single_lvl
 
         self.refine_level = refine_level
         self.refine_type = refine_type
@@ -91,12 +93,14 @@ class BFP(nn.Module):
 
         # step 3: scatter refined features to multi-levels by a residual path
         outs = []
-        for i in range(self.num_levels):
-            out_size = inputs[i].size()[2:]
-            if i < self.refine_level:
-                residual = F.interpolate(bsf, size=out_size, mode='nearest')
-            else:
-                residual = F.adaptive_max_pool2d(bsf, output_size=out_size)
-            outs.append(residual + inputs[i])
-
+        if not self.output_single_lvl:
+            for i in range(self.num_levels):
+                out_size = inputs[i].size()[2:]
+                if i < self.refine_level:
+                    residual = F.interpolate(bsf, size=out_size, mode='nearest')
+                else:
+                    residual = F.adaptive_max_pool2d(bsf, output_size=out_size)
+                outs.append(residual + inputs[i])
+        else:
+            outs.append(bsf)
         return tuple(outs)
