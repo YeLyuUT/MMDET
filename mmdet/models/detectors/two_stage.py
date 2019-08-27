@@ -96,7 +96,10 @@ class TwoStageDetector(BaseDetector, RPNTestMixin, BBoxTestMixin,
                       gt_masks=None,
                       proposals=None):
         x = self.extract_feat(img)
-        
+
+        if isinstance(x, list):
+            feats_list = x
+            x = feats_list[0]
         losses = dict()
 
         # RPN forward and loss
@@ -114,6 +117,9 @@ class TwoStageDetector(BaseDetector, RPNTestMixin, BBoxTestMixin,
             proposal_list = self.rpn_head.get_bboxes(*proposal_inputs)
         else:
             proposal_list = proposals
+
+        if isinstance(x, list):
+            x = feats_list[1]
 
         # assign gts and sample proposals
         if self.with_bbox or self.with_mask:
