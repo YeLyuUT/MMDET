@@ -31,13 +31,13 @@ __global__ void PSROIPoolForward(const int nthreads, const scalar_t* bottom_data
         bottom_rois += n * 5;
         int roi_batch_ind = bottom_rois[0];
 	    scalar_t roi_start_w =
-        	static_cast<scalar_t>(round(bottom_rois[1])) * spatial_scale;
+        	static_cast<scalar_t>(bottom_rois[1]) * spatial_scale;
       	scalar_t roi_start_h =
-        	static_cast<scalar_t>(round(bottom_rois[2])) * spatial_scale;
+        	static_cast<scalar_t>(bottom_rois[2]) * spatial_scale;
       	scalar_t roi_end_w =
-        	static_cast<scalar_t>(round(bottom_rois[3]) + 1.) * spatial_scale;
+        	static_cast<scalar_t>(bottom_rois[3] + 1.) * spatial_scale;
       	scalar_t roi_end_h =
-        	static_cast<scalar_t>(round(bottom_rois[4]) + 1.) * spatial_scale;
+        	static_cast<scalar_t>(bottom_rois[4] + 1.) * spatial_scale;
 
         // Force malformed ROIs to be 1x1
         scalar_t roi_width = max(roi_end_w - roi_start_w, 0.1);  // avoid 0
@@ -46,14 +46,14 @@ __global__ void PSROIPoolForward(const int nthreads, const scalar_t* bottom_data
         scalar_t bin_size_h = (scalar_t)(roi_height) / (scalar_t)(pooled_height);
         scalar_t bin_size_w = (scalar_t)(roi_width) / (scalar_t)(pooled_width);
 
-        int hstart = floor(static_cast<scalar_t>(ph) * bin_size_h
-                          + roi_start_h);
-      	int wstart = floor(static_cast<scalar_t>(pw)* bin_size_w
-                          + roi_start_w);
-      	int hend = ceil(static_cast<scalar_t>(ph + 1) * bin_size_h
-                        + roi_start_h);
-      	int wend = ceil(static_cast<scalar_t>(pw + 1) * bin_size_w
-                        + roi_start_w);
+        int hstart = static_cast<scalar_t>(ph) * bin_size_h
+                          + roi_start_h;
+      	int wstart = static_cast<scalar_t>(pw) * bin_size_w
+                          + roi_start_w;
+      	int hend = static_cast<scalar_t>(ph + 1) * bin_size_h
+                        + roi_start_h;
+      	int wend = static_cast<scalar_t>(pw + 1) * bin_size_w
+                        + roi_start_w;
 
         // Add roi offsets and clip to input boundaries
         hstart = min(max(hstart, 0), height);
@@ -68,10 +68,39 @@ __global__ void PSROIPoolForward(const int nthreads, const scalar_t* bottom_data
 
         bottom_data += (roi_batch_ind * channels + c) * height * width;
         scalar_t out_sum = 0;
-      	for (int h = hstart; h < hend; ++h) {
-      	  for (int w = wstart; w < wend; ++w) {
-      	    int bottom_index = h*width + w;
-      	    out_sum += bottom_data[bottom_index];
+      	for (int y = hstart; y < hend; ++y) {
+      	  for (int x = wstart; x < wend; ++x) {
+      	    int y_low = (int)y;
+            int x_low = (int)x;
+            int y_high;
+            int x_high;
+
+            if (y_low >= height - 1) {
+              y_high = y_low = height - 1;
+              y = (scalar_t)y_low;
+            } else {
+              y_high = y_low + 1;
+            }
+
+            if (x_low >= width - 1) {
+              x_high = x_low = width - 1;
+              x = (scalar_t)x_low;
+            } else {
+              x_high = x_low + 1;
+            }
+            scalar_t ly = y - y_low;
+            scalar_t lx = x - x_low;
+            scalar_t hy = 1. - ly;
+            scalar_t hx = 1. - lx;
+            // do bilinear interpolation
+            scalar_t lt = bottom_data[y_low * width + x_low];
+            scalar_t rt = bottom_data[y_low * width + x_high];
+            scalar_t lb = bottom_data[y_high * width + x_low];
+            scalar_t rb = bottom_data[y_high * width + x_high];
+            scalar_t w1 = hy * hx, w2 = hy * lx, w3 = ly * hx, w4 = ly * lx;
+
+            scalar_t val = (w1 * lt + w2 * rt + w3 * lb + w4 * rb);
+      	    out_sum += val;
       	  }
       	}
       	scalar_t bin_area = (hend - hstart)*(wend - wstart);
@@ -120,10 +149,10 @@ __global__ void PSROIPoolBackward(const int nthreads, const scalar_t* top_diff,
       // [start, end) interval for spatial sampling
       bottom_rois += n * 5;
       int roi_batch_ind = bottom_rois[0];
-      scalar_t roi_start_w = static_cast<scalar_t>(round(bottom_rois[1])) * spatial_scale;
-      scalar_t roi_start_h = static_cast<scalar_t>(round(bottom_rois[2])) * spatial_scale;
-      scalar_t roi_end_w = static_cast<scalar_t>(round(bottom_rois[3]) + 1.) * spatial_scale;
-      scalar_t roi_end_h = static_cast<scalar_t>(round(bottom_rois[4]) + 1.) * spatial_scale;
+      scalar_t roi_start_w = static_cast<scalar_t>(bottom_rois[1]) * spatial_scale;
+      scalar_t roi_start_h = static_cast<scalar_t>(bottom_rois[2]) * spatial_scale;
+      scalar_t roi_end_w = static_cast<scalar_t>(bottom_rois[3] + 1.) * spatial_scale;
+      scalar_t roi_end_h = static_cast<scalar_t>(bottom_rois[4] + 1.) * spatial_scale;
 
       // Force too small ROIs to be 1x1
       scalar_t roi_width = max(roi_end_w - roi_start_w, 0.1);  // avoid 0
@@ -133,10 +162,10 @@ __global__ void PSROIPoolBackward(const int nthreads, const scalar_t* top_diff,
       scalar_t bin_size_h = roi_height / static_cast<scalar_t>(pooled_height);
       scalar_t bin_size_w = roi_width / static_cast<scalar_t>(pooled_width);
 
-      int hstart = floor(static_cast<scalar_t>(ph)* bin_size_h + roi_start_h);
-      int wstart = floor(static_cast<scalar_t>(pw)* bin_size_w + roi_start_w);
-      int hend = ceil(static_cast<scalar_t>(ph + 1) * bin_size_h + roi_start_h);
-      int wend = ceil(static_cast<scalar_t>(pw + 1) * bin_size_w + roi_start_w);
+      int hstart = static_cast<scalar_t>(ph)* bin_size_h + roi_start_h;
+      int wstart = static_cast<scalar_t>(pw)* bin_size_w + roi_start_w;
+      int hend = static_cast<scalar_t>(ph + 1) * bin_size_h + roi_start_h;
+      int wend = static_cast<scalar_t>(pw + 1) * bin_size_w + roi_start_w;
       // Add roi offsets and clip to input boundaries
       hstart = min(max(hstart, 0), height);
       hend = min(max(hend, 0), height);
@@ -149,11 +178,37 @@ __global__ void PSROIPoolBackward(const int nthreads, const scalar_t* top_diff,
       scalar_t* offset_bottom_diff = bottom_diff + (roi_batch_ind * channels + c) * height * width;
       scalar_t bin_area = (hend - hstart)*(wend - wstart);
       scalar_t diff_val = is_empty ? scalar_t(0) : top_diff[index] / bin_area;
-      for (int h = hstart; h < hend; ++h) {
-        for (int w = wstart; w < wend; ++w) {
-          int bottom_index = h*width + w;
-          //caffe_gpu_atomic_add(diff_val, offset_bottom_diff + bottom_index);
-          atomicAdd(offset_bottom_diff + bottom_index, diff_val);
+      for (int y = hstart; y < hend; ++y) {
+        for (int x = wstart; x < wend; ++x) {
+          int y_low = (int)y;
+          int x_low = (int)x;
+          int y_high;
+          int x_high;
+
+          if (y_low >= height - 1) {
+            y_high = y_low = height - 1;
+            y = (scalar_t)y_low;
+          } else {
+            y_high = y_low + 1;
+          }
+
+          if (x_low >= width - 1) {
+            x_high = x_low = width - 1;
+            x = (scalar_t)x_low;
+          } else {
+            x_high = x_low + 1;
+          }
+          scalar_t ly = y - y_low;
+          scalar_t lx = x - x_low;
+          scalar_t hy = 1. - ly;
+          scalar_t hx = 1. - lx;
+          // do bilinear interpolation
+          scalar_t w1 = hy * hx, w2 = hy * lx, w3 = ly * hx, w4 = ly * lx;
+
+          atomicAdd(offset_bottom_diff + y_low  * width + x_low,  diff_val*w1);
+          atomicAdd(offset_bottom_diff + y_low  * width + x_high, diff_val*w2);
+          atomicAdd(offset_bottom_diff + y_high * width + x_low,  diff_val*w3);
+          atomicAdd(offset_bottom_diff + y_high * width + x_high, diff_val*w4);
         }
       }
   }
