@@ -1,5 +1,6 @@
 import torch.nn as nn
 import torch.nn.functional as F
+import torch
 from mmcv.cnn import xavier_init
 
 from ..plugins import NonLocal2D
@@ -65,6 +66,7 @@ class BFP(nn.Module):
                 conv_cfg=self.conv_cfg,
                 norm_cfg=self.norm_cfg)
 
+
     def init_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -85,23 +87,25 @@ class BFP(nn.Module):
                     inputs[i], size=gather_size, mode='nearest')
             feats.append(gathered)
 
-        bsf = sum(feats) / len(feats)
 
+        bsf = sum(feats) / len(feats)
         # step 2: refine gathered features
         if self.refine_type is not None:
             bsf = self.refine(bsf)
-
-        # step 3: scatter refined features to multi-levels by a residual path
-        outs = []
-        for i in range(self.num_levels):
-            out_size = inputs[i].size()[2:]
-            if i < self.refine_level:
-                residual = F.interpolate(bsf, size=out_size, mode='nearest')
-            else:
-                residual = F.adaptive_max_pool2d(bsf, output_size=out_size)
-            outs.append(residual + inputs[i])
         if not self.output_single_lvl:
+            # step 3: scatter refined features to multi-levels by a residual path
+            outs = []
+            for i in range(self.num_levels):
+                out_size = inputs[i].size()[2:]
+                if i < self.refine_level:
+                    residual = F.interpolate(bsf, size=out_size, mode='nearest')
+                else:
+                    residual = F.adaptive_max_pool2d(bsf, output_size=out_size)
+                outs.append(residual + inputs[i])
             return tuple(outs)
         else:
-            return [tuple(outs), tuple([bsf])]
+            for i in range(self.num_levels):
+                feats[i] = feats[i]+bsf
+            out = torch.cat(feats, dim=1)
+            return tuple([out])
 

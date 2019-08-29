@@ -5,8 +5,6 @@ from mmdet.core import (bbox2roi, bbox_mapping, merge_aug_bboxes,
 class RPNTestMixin(object):
 
     def simple_test_rpn(self, x, img_meta, rpn_test_cfg):
-        if isinstance(x, list):
-            x = x[0]
         rpn_outs = self.rpn_head(x)
         proposal_inputs = rpn_outs + (img_meta, rpn_test_cfg)
         proposal_list = self.rpn_head.get_bboxes(*proposal_inputs)
@@ -44,8 +42,6 @@ class BBoxTestMixin(object):
                            rcnn_test_cfg,
                            rescale=False):
         """Test only det bboxes without augmentation."""
-        if isinstance(x, list):
-            x = x[1]
         rois = bbox2roi(proposals)
         roi_feats = self.bbox_roi_extractor(
             x[:len(self.bbox_roi_extractor.featmap_strides)], rois)
@@ -68,8 +64,6 @@ class BBoxTestMixin(object):
         aug_bboxes = []
         aug_scores = []
         for x, img_meta in zip(feats, img_metas):
-            if isinstance(x, list):
-                x = x[1]
             # only one image in the batch
             img_shape = img_meta[0]['img_shape']
             scale_factor = img_meta[0]['scale_factor']
