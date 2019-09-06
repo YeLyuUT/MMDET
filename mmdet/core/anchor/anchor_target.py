@@ -122,7 +122,7 @@ def anchor_target_single(flat_anchors,
     bbox_weights = torch.zeros_like(anchors)
     labels = anchors.new_zeros(num_valid_anchors, dtype=torch.long)
     label_weights = anchors.new_zeros(num_valid_anchors, dtype=torch.float)
-    if gt_bboxes is None:
+    if gt_bboxes is None or len(gt_bboxes)==0:
         label_weights[:] = 1.0
         num_total_anchors = flat_anchors.size(0)
         labels = unmap(labels, num_total_anchors, inside_flags)
@@ -145,6 +145,8 @@ def anchor_target_single(flat_anchors,
     pos_inds = sampling_result.pos_inds
     neg_inds = sampling_result.neg_inds
     if len(pos_inds) > 0:
+        #print('sampling_result.pos_bboxes:',sampling_result.pos_bboxes)
+        #print('sampling_result.pos_gt_bboxes:', sampling_result.pos_gt_bboxes)
         pos_bbox_targets = bbox2delta(sampling_result.pos_bboxes,
                                       sampling_result.pos_gt_bboxes,
                                       target_means, target_stds)

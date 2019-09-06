@@ -32,6 +32,19 @@ class RPNTestMixin(object):
         ]
         return merged_proposals
 
+class SiameseRPNTestMixin(object):
+
+    def simple_test_siamese_rpn(self, feat1, feat2, rpn_rois_1, img_meta, siamese_rpn_test_cfg):
+        siameserpn_outs = self.siameserpn_head(feat1, feat2, rpn_rois_1, img_meta)
+        proposal_inputs = siameserpn_outs + (siamese_rpn_test_cfg,)
+        proposal_list = self.siameserpn_head.get_bboxes(*proposal_inputs)
+        proposal_list = proposal_list[:len(img_meta)]
+        return proposal_list
+
+    def aug_test_siamese_rpn(self):
+        raise NotImplementedError
+
+
 
 class BBoxTestMixin(object):
 

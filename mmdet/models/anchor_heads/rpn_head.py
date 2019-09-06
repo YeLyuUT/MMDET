@@ -16,14 +16,23 @@ class RPNHead(AnchorHead):
         super(RPNHead, self).__init__(2, in_channels, **kwargs)
 
     def _init_layers(self):
-        self.rpn_conv = nn.Conv2d(
-            self.in_channels, self.feat_channels, 3, padding=1)
+        #self.rpn_conv = nn.Conv2d(self.in_channels, self.feat_channels, 3, padding=1)
+        self.rpn_conv = nn.Sequential(
+            nn.Conv2d(self.in_channels, self.feat_channels, 3, 1, bias=False),
+            nn.BatchNorm2d(self.feat_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(self.feat_channels, self.feat_channels, 3, 1, bias=False),
+            nn.BatchNorm2d(self.feat_channels),
+        )
+
         self.rpn_cls = nn.Conv2d(self.feat_channels,
                                  self.num_anchors * self.cls_out_channels, 1)
         self.rpn_reg = nn.Conv2d(self.feat_channels, self.num_anchors * 4, 1)
 
     def init_weights(self):
-        normal_init(self.rpn_conv, std=0.01)
+        for m in self.rpn_conv.children():
+            if m is type(nn.Conv2d):
+                normal_init(m, std=0.01)
         normal_init(self.rpn_cls, std=0.01)
         normal_init(self.rpn_reg, std=0.01)
 

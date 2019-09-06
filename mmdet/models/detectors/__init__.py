@@ -13,9 +13,10 @@ from .fcos import FCOS
 from .grid_rcnn import GridRCNN
 from .mask_scoring_rcnn import MaskScoringRCNN
 from .rfcn import RFCN
+from .siamese_rcnn import SiameseRCNN
 
 __all__ = [
     'BaseDetector', 'SingleStageDetector', 'TwoStageDetector', 'RPN',
     'FastRCNN', 'FasterRCNN', 'MaskRCNN', 'CascadeRCNN', 'HybridTaskCascade',
-    'DoubleHeadRCNN', 'RetinaNet', 'FCOS', 'GridRCNN', 'MaskScoringRCNN','RFCN'
+    'DoubleHeadRCNN', 'RetinaNet', 'FCOS', 'GridRCNN', 'MaskScoringRCNN','SiameseRCNN','RFCN'
 ]
