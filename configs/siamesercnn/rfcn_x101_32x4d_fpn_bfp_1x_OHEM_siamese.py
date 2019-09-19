@@ -1,36 +1,48 @@
 # model settings
 model = dict(
     type='SiameseRCNN',
-    pretrained='open-mmlab://resnext101_32x4d',
+    pretrained='open-mmlab://msra/hrnetv2_w32',
     backbone=dict(
-        type='ResNeXt',
-        depth=101,
-        groups=32,
-        base_width=4,
-        num_stages=4,
-        out_indices=(0, 1, 2, 3),
-        frozen_stages=1,
-        style='pytorch'),
-    neck=[dict(
-            type='FPN',
-            in_channels=[256, 512, 1024, 2048],
-            out_channels=256,
-            num_outs=5),
-        dict(
+        type='HRNet',
+        extra=dict(
+            stage1=dict(
+                num_modules=1,
+                num_branches=1,
+                block='BOTTLENECK',
+                num_blocks=(4,),
+                num_channels=(64,)),
+            stage2=dict(
+                num_modules=1,
+                num_branches=2,
+                block='BASIC',
+                num_blocks=(4, 4),
+                num_channels=(32, 64)),
+            stage3=dict(
+                num_modules=4,
+                num_branches=3,
+                block='BASIC',
+                num_blocks=(4, 4, 4),
+                num_channels=(32, 64, 128)),
+            stage4=dict(
+                num_modules=3,
+                num_branches=4,
+                block='BASIC',
+                num_blocks=(4, 4, 4, 4),
+                num_channels=(32, 64, 128, 256)))),
+    neck=dict(
             type='BFP',
-            in_channels=256,
-            num_levels=5,
-            refine_level=2,
-            refine_type='conv',
-            output_single_lvl=True),
-        ],
+            in_channels=[32, 64, 128, 256],
+            num_levels=4,
+            refine_level=1,
+            out_channels=256,
+            output_single_lvl = True),
     rpn_head=dict(
         type='RPNHead',
-        in_channels=256*5,
+        in_channels=480,
         feat_channels=256,
-        anchor_scales=[2, 4, 8, 16, 32],
-        anchor_ratios=[0.5, 1.0, 2.0],
-        anchor_strides=[16],
+        anchor_scales=[2, 4, 8, 16, 32, 64],
+        anchor_ratios=[0.33, 0.66, 1.0, 1.5, 3.0],
+        anchor_strides=[8],
         target_means=[.0, .0, .0, .0],
         target_stds=[1.0, 1.0, 1.0, 1.0],
         loss_cls=dict(
@@ -38,26 +50,23 @@ model = dict(
         loss_bbox=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=1.0)),
     siameserpn_head=dict(
         type='SiameseRPNHead',
-        in_channels=256*5,
+        in_channels=480,
         out_channels=256,
-        anchor_scales=[2, 4, 8, 16, 32, 64],
-        anchor_ratios=[0.5, 1.0, 2.0],
-        anchor_strides=[16],
+        feat_strides=[8],
         target_means=[.0, .0, .0, .0],
-        target_stds=[1.0, 1.0, 1.0, 1.0],
-        loss_cls=dict(
-            type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
-        loss_bbox=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=1.0)),
+        target_stds=[0.1, 0.1, 0.2, 0.2],
+        loss_cls=dict(type='SmoothL1Loss', beta=1.0, loss_weight=1.0),
+        loss_bbox=dict(type='SmoothL1Loss', beta=1.0, loss_weight=1.0)),
     bbox_roi_extractor=dict(
         type='SingleRoIExtractor',
-        roi_layer=dict(type='PSRoIPoolAfterPointwiseConv', in_channels=256*5, out_channels=10*7*7, out_size=7),
+        roi_layer=dict(type='PSRoIPoolAfterPointwiseConv', in_channels=480, out_channels=10*7*7, out_size=7, n_prev=3),
         out_channels=10,
-        featmap_strides=[16]),
+        featmap_strides=[8]),
     bbox_head=dict(
         type='SharedFCBBoxHead',
         num_fcs=1,
         in_channels=10,
-        fc_out_channels=4096,
+        fc_out_channels=2048,
         roi_feat_size=7,
         num_classes=31,
         target_means=[0., 0., 0., 0.],
@@ -87,29 +96,16 @@ train_cfg = dict(
     siameserpn = dict(
         assigner_track=dict(
             type='MaxIoUAssigner',
-            pos_iou_thr=0.7,
-            neg_iou_thr=0.4,
-            min_pos_iou=0.7,
+            pos_iou_thr=0.5,
+            neg_iou_thr=0.5,
+            min_pos_iou=0.5,
             ignore_iof_thr=-1),
         sampler_track=dict(
             type='RandomSampler',
-            num=256,
+            num=128,
             pos_fraction=1.0,
             neg_pos_ub=-1,
             add_gt_as_proposals=True),
-        assigner=dict(
-            type='MaxIoUAssigner',
-            pos_iou_thr=0.7,
-            neg_iou_thr=0.3,
-            min_pos_iou=0.3,
-            ignore_iof_thr=-1),
-        sampler=dict(
-            type='RandomSampler',
-            num=256,
-            pos_fraction=0.5,
-            neg_pos_ub=-1,
-            add_gt_as_proposals=False),
-        allowed_border=-1,
         pos_weight=-1,
         debug=False),
     rpn_proposal=dict(
@@ -117,16 +113,20 @@ train_cfg = dict(
         nms_pre=8000,
         nms_post=8000,
         max_num=8000,
-        nms_thr=0.9,
+        nms_thr=0.7,
         min_bbox_size=0),
     siameserpn_proposal=dict(
         nms_across_levels=False,
-        nms_pre=10,
-        nms_post=10,
-        max_num=10,
+        nms_pre=1000,
+        nms_post=1000,
+        max_num=1000,
         nms_thr=0.7,
-        min_bbox_size=0
-    ),
+        min_bbox_size=0,
+        score_threshold=0.0,
+        TRACK = dict(
+        PENALTY_K = 0.15,
+        WINDOW_INFLUENCE = 0.0,),
+        ),
     rcnn=dict(
         assigner=dict(
             type='MaxIoUAssigner',
@@ -152,11 +152,16 @@ test_cfg = dict(
         min_bbox_size=0),
     siameserpn=dict(
         nms_across_levels=False,
-        nms_pre=10,
-        nms_post=1,
-        max_num=1,
+        nms_pre=1000,
+        nms_post=1000,
+        max_num=1000,
         nms_thr=0.7,
-        min_bbox_size=0
+        min_bbox_size=0,
+        score_threshold=0.7,
+        TRACK = dict(
+        PENALTY_K = 0.15,
+        WINDOW_INFLUENCE = 0.0,
+        ),
     ),
     rcnn=dict(
         score_thr=0.05, nms=dict(type='nms', iou_thr=0.5), max_per_img=100)
@@ -169,13 +174,13 @@ data_root = 'data/imagenet/Data/VID/train/'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 data = dict(
-    imgs_per_gpu=2,
-    workers_per_gpu=5,
+    imgs_per_gpu=1,
+    workers_per_gpu=2,
     train=dict(
         type=dataset_type,
-        ann_file=data_root + '../../../ImageSets/VID_train_pair_experiment.json',
+        ann_file=data_root + '../../../ImageSets/VID_train_pair_experiment_82.json',
         img_prefix=data_root,
-        img_scale=(1024, 640),
+        img_scale=[(1333, 800), (800, 480)],
         img_norm_cfg=img_norm_cfg,
         size_divisor=32,
         flip_ratio=0.5,
@@ -185,9 +190,9 @@ data = dict(
         with_trackid=True),
     test=dict(
         type=dataset_type,
-        ann_file=data_root + '../../../ImageSets/VID_train_pair_experiment_1.json',
+        ann_file=data_root + '../../../ImageSets/VID_train_pair_experiment_82.json',
         img_prefix=data_root,
-        img_scale=(1024, 640),
+        img_scale=[(1333, 800),(1000, 600),(800, 480)],
         img_norm_cfg=img_norm_cfg,
         size_divisor=32,
         flip_ratio=0,
@@ -196,7 +201,7 @@ data = dict(
         with_trackid=False,
         test_mode=True))
 # optimizer
-optimizer = dict(type='SGD', lr=0.002, momentum=0.9, weight_decay=0.0001)
+optimizer = dict(type='SGD', lr=0.001, momentum=0.9, weight_decay=0.0001)
 optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
 # learning policy
 lr_config = dict(
@@ -205,7 +210,7 @@ lr_config = dict(
     warmup_iters=50,
     warmup_ratio=1.0 / 3,
     step=[500])
-checkpoint_config = dict(interval=1)
+checkpoint_config = dict(interval=4)
 # yapf:disable
 log_config = dict(
     interval=10,
@@ -215,7 +220,7 @@ log_config = dict(
     ])
 # yapf:enable
 # runtime settings
-total_epochs = 1
+total_epochs = 16
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
 work_dir = './work_dirs/siamese_rcnn_experiment'

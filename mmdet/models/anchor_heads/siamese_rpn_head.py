@@ -7,8 +7,8 @@ from ...ops.psroi_pool import PSRoIPoolAfterPointwiseConv
 from ...core import xcorr_depthwise, xcorr_fast
 from ..registry import HEADS
 from mmdet.ops import nms
-from mmdet.core import (AnchorGenerator, anchor_target, delta2bbox, force_fp32,bbox2delta,
-                        multi_apply, multiclass_nms)
+from mmdet.core import (AnchorGenerator, anchor_target, delta2bbox, force_fp32, bbox2delta,
+                        multi_apply, multiclass_nms, bbox_overlaps)
 from ..losses import accuracy
 from ..builder import build_loss
 
@@ -20,7 +20,7 @@ class RPN(nn.Module):
         raise NotImplementedError
 
 class DepthwiseXCorr(nn.Module):
-    def __init__(self, in_channels, hidden, out_channels, kernel_size=1, head_kernel_size=1, padding=0):
+    def __init__(self, in_channels, hidden, out_channels, kernel_size=1, head_kernel_size=3, padding=0):
         super(DepthwiseXCorr, self).__init__()
         self.conv_kernel = nn.Sequential(
             nn.Conv2d(in_channels, hidden, kernel_size=kernel_size, bias=False),
@@ -49,14 +49,11 @@ class DepthwiseXCorr(nn.Module):
         return out
 
 class DepthwiseRPN(RPN):
-    def __init__(self, in_channels, out_channels, kernel_size, target_size, use_sigmoid=True):
+    def __init__(self, in_channels, out_channels, kernel_size, target_size, n_classes):
         super(DepthwiseRPN, self).__init__()
         self.rpn_feat = DepthwiseXCorr(in_channels, out_channels, out_channels, padding=0)
         sz_after_conv = target_size-kernel_size+1
-        if use_sigmoid is True:
-            self.rpn_cls = nn.Linear(out_channels*sz_after_conv*sz_after_conv, 1)
-        else:
-            self.rpn_cls = nn.Linear(out_channels*sz_after_conv*sz_after_conv, 2)
+        self.rpn_cls = nn.Linear(out_channels*sz_after_conv*sz_after_conv, n_classes)
         self.rpn_reg = nn.Linear(out_channels*sz_after_conv*sz_after_conv, 4)
 
     def forward(self, z_f, x_f):
@@ -71,24 +68,25 @@ class DepthwiseRPN(RPN):
 
 @HEADS.register_module
 class SiameseRPNHead(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_sizes=[7], target_sizes=[15], feat_strides = [8],
+    def __init__(self, in_channels, out_channels, kernel_sizes=[7], target_sizes=[19], feat_strides=[8],
                  target_means=[.0, .0, .0, .0],
                  target_stds=[1.0, 1.0, 1.0, 1.0],
-                 loss_cls=dict(type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
+                 loss_cls=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=1.0),
                  loss_bbox=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=1.0)):
         super(SiameseRPNHead, self).__init__()
         # spatial_scales is 1./feat_strides
         self.feat_strides = feat_strides
         assert len(self.feat_strides)==1, 'There should be only 1 level for Siamese RPN.'
         spatial_scales = [1. / feat_stride for feat_stride in feat_strides]
-        self.loss_cls = build_loss(loss_cls)
         self.loss_bbox = build_loss(loss_bbox)
+        self.loss_cls = build_loss(loss_cls)
+
         self.target_means = target_means
         self.target_stds = target_stds
-        self.use_sigmoid_cls = loss_cls.use_sigmoid
+
         self.kernel_crop_modules = [self._get_kernel_crop_modules(in_channels, kernel_size, spatial_scale) for kernel_size, spatial_scale in zip(kernel_sizes, spatial_scales)]
         self.target_crop_modules = [self._get_target_crop_modules(in_channels, target_size, spatial_scale) for target_size, spatial_scale in zip(target_sizes, spatial_scales)]
-        self.rpn_module = DepthwiseRPN(in_channels, out_channels, kernel_sizes[0], target_sizes[0], use_sigmoid=self.use_sigmoid_cls)
+        self.rpn_module = DepthwiseRPN(in_channels, out_channels, kernel_sizes[0], target_sizes[0], n_classes=1)
 
         self.kernel_sizes = kernel_sizes
         self.target_sizes = target_sizes
@@ -96,7 +94,6 @@ class SiameseRPNHead(nn.Module):
         assert len(kernel_sizes)==1 and len(target_sizes)==1, (len(kernel_sizes), len(target_sizes))
 
     def _get_kernel_crop_modules(self, in_channels, kernel_size, spatial_scale):
-        '''
         kernel_crop_channels = 10
         kernel_crop_module = \
             PSRoIPoolAfterPointwiseConv(in_channels, kernel_crop_channels*kernel_size*kernel_size, kernel_size, spatial_scale,n_prev=2)
@@ -107,7 +104,7 @@ class SiameseRPNHead(nn.Module):
                                                       kernel_size=1, stride=1, bias=False),
                                             nn.BatchNorm2d(in_channels),)
                                            )
-        '''
+
         kernel_crop_module = RoIAlign(kernel_size, spatial_scale)
         return kernel_crop_module.cuda()
 
@@ -161,6 +158,8 @@ class SiameseRPNHead(nn.Module):
                                                                                rpn_rois_1, kernel_crop_module,
                                                                                target_crop_module)
         cls_score, bbox_pred = self.rpn_module(kernels, targets)
+        # convert to [0-1].
+        cls_score = F.sigmoid(cls_score)
         return cls_score, bbox_pred, target_ranges, target_metas
 
     def forward(self, feat1s, feat2s, rpn_rois_1, img_metas):
@@ -178,8 +177,8 @@ class SiameseRPNHead(nn.Module):
                 label_weights[idx] = 1.0
                 pos_bbox_targets = bbox2delta(rpn_rois[idx:idx+1, 1:], gt_bboxes[idx], self.target_means,
                                               self.target_stds)
-                bbox_targets[idx,:]=pos_bbox_targets
-                bbox_weights[idx,:]=1.0
+                bbox_targets[idx,:] = pos_bbox_targets
+                bbox_weights[idx,:] = 1.0
             else:
                 labels[idx] = 0.0
                 label_weights[idx] = 1.0
@@ -188,6 +187,7 @@ class SiameseRPNHead(nn.Module):
 
     @force_fp32(apply_to=('cls_score', 'bbox_pred'))
     def loss(self,
+             rpn_rois,
              cls_score,
              bbox_pred,
              labels,
@@ -196,30 +196,41 @@ class SiameseRPNHead(nn.Module):
              bbox_weights,
              reduction_override=None):
         losses = dict()
+        pos_inds = labels > 0
+        if len(pos_inds) > 0:
+            pos_bbox_pred = bbox_pred.view(bbox_pred.size(0), 4)[pos_inds]
+            losses['loss_bbox'] = self.loss_bbox(
+                pos_bbox_pred,
+                bbox_targets[pos_inds],
+                bbox_weights[pos_inds],
+                avg_factor=bbox_targets.size(0),
+                reduction_override=reduction_override)
 
         avg_factor = max(torch.sum(label_weights > 0).float().item(), 1.)
+
+        all_boxes = delta2bbox(rpn_rois[:, 1:], bbox_pred, self.target_means, self.target_stds, None)
+        bboxes = all_boxes[pos_inds]
+
+        gtbboxes = delta2bbox(rpn_rois[:, 1:], bbox_targets, self.target_means, self.target_stds, None)[pos_inds]
+        iou_target = bbox_overlaps(bboxes, gtbboxes, 'iou', is_aligned=True)
+
+        labels = labels.float()
+        labels[pos_inds] = iou_target
+        #print('labels:', labels)
+
         losses['loss_cls'] = self.loss_cls(
             cls_score,
-            labels,
-            label_weights,
+            labels.view(-1, 1),
+            label_weights.view(-1, 1),
             avg_factor=avg_factor,
             reduction_override=reduction_override)
-        if self.use_sigmoid_cls:
-            nBatch = len(cls_score[:])
-            losses['acc'] = ((cls_score[:]>0).float().eq(labels[:].float()).sum()/nBatch).float()
-        else:
-            losses['acc'] = accuracy(cls_score, labels)
-        pos_inds = labels > 0
 
-        pos_bbox_pred = bbox_pred.view(bbox_pred.size(0), 4)[pos_inds]
-        losses['loss_bbox'] = self.loss_bbox(
-            pos_bbox_pred,
-            bbox_targets[pos_inds],
-            bbox_weights[pos_inds],
-            avg_factor=bbox_targets.size(0),
-            reduction_override=reduction_override)
-        return dict(
-            loss_siamese_rpn_cls=losses['loss_cls'], siamese_rpn_acc=losses['acc'], loss_siamese_rpn_bbox=losses['loss_bbox'])
+        pred_bboxes = torch.cat([all_boxes, cls_score], dim=-1)
+
+        return dict(loss_siamese_rpn_cls=losses['loss_cls'],
+                    loss_siamese_rpn_bbox=losses['loss_bbox']), \
+               pred_bboxes
+
 
     @force_fp32(apply_to=('cls_score', 'bbox_pred'))
     def get_bboxes(self,
@@ -243,8 +254,8 @@ class SiameseRPNHead(nn.Module):
 
             if isinstance(cls_score, list):
                 cls_score = sum(cls_score) / float(len(cls_score))
-            scores = F.softmax(cls_score, dim=1) if cls_score is not None else None
-
+            #scores = F.softmax(cls_score, dim=1) if cls_score is not None else None
+            scores = cls_score
             if bbox_pred is not None:
                 bboxes = delta2bbox(roi[:, 1:], bbox_pred, self.target_means,
                                     self.target_stds, img_shape)
@@ -257,10 +268,20 @@ class SiameseRPNHead(nn.Module):
             scores_list[int(roi[0, 0])].append(scores)
         bboxes = [torch.cat(bboxes, dim=0) for bboxes in bboxes_list]
         scores = [torch.cat(scores, dim=0) for scores in scores_list]
-        if n_batches==1:
-            bboxes = torch.cat([bboxes[0][:, :], scores[0][:, 1:]],dim=-1)
-            scores = scores[0][:, 1]
         return bboxes, scores
+
+    def get_rois_from_boxes(self, n_batches, bboxes_list, scores_list, score_threshold=0.):
+        rpn_roi_list = []
+        for i_batch in range(n_batches):
+            bboxes = bboxes_list[i_batch]
+            scores = scores_list[i_batch].view(-1)
+            rpn_rois = bboxes.new_zeros((bboxes.shape[0], bboxes.shape[1]+1))
+            rpn_rois[:, :4] = bboxes
+            rpn_rois[:, 4] = scores
+            inds = scores>score_threshold
+            rpn_rois = rpn_rois[inds,:]
+            rpn_roi_list.append(rpn_rois)
+        return rpn_roi_list
 
 
 

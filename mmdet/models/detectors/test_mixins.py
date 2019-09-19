@@ -33,18 +33,37 @@ class RPNTestMixin(object):
         return merged_proposals
 
 class SiameseRPNTestMixin(object):
-
     def simple_test_siamese_rpn(self, feat1, feat2, rpn_rois_1, img_meta, siamese_rpn_test_cfg):
-        siameserpn_outs = self.siameserpn_head(feat1, feat2, rpn_rois_1, img_meta)
-        proposal_inputs = siameserpn_outs + (siamese_rpn_test_cfg,)
-        proposal_list = self.siameserpn_head.get_bboxes(*proposal_inputs)
-        proposal_list = proposal_list[:len(img_meta)]
-        return proposal_list
+        cls_score, bbox_pred, target_ranges, target_metas = self.siameserpn_head(feat1, feat2, rpn_rois_1, img_meta)
+        proposal_inputs = (len(feat1), rpn_rois_1, cls_score, bbox_pred, target_metas, siamese_rpn_test_cfg,)
+        bboxes_list, scores_list = self.siameserpn_head.get_bboxes(*proposal_inputs)
+        proposals = self.siameserpn_head.get_rois_from_boxes(len(feat1),
+                                                             bboxes_list,
+                                                             scores_list,
+                                                             score_threshold=siamese_rpn_test_cfg.score_threshold)
+        return proposals
 
-    def aug_test_siamese_rpn(self):
-        raise NotImplementedError
-
-
+    def aug_test_siamese_rpn(self, feat1s, feat2s, rpn_rois_1s, img_metas, siamese_rpn_test_cfg):
+        imgs_per_gpu = len(img_metas[0])
+        aug_proposals = [[] for _ in range(imgs_per_gpu)]
+        for feat1, feat2, rpn_rois_1, img_meta in zip(feat1s, feat2s, rpn_rois_1s, img_metas):
+            proposal_list = self.simple_test_siamese_rpn(feat1, feat2, rpn_rois_1, img_meta, siamese_rpn_test_cfg)
+            for i, proposals in enumerate(proposal_list):
+                aug_proposals[i].append(proposals)
+        # reorganize the order of 'img_metas' to match the dimensions
+        # of 'aug_proposals'
+        aug_img_metas = []
+        for i in range(imgs_per_gpu):
+            aug_img_meta = []
+            for j in range(len(img_metas)):
+                aug_img_meta.append(img_metas[j][i])
+            aug_img_metas.append(aug_img_meta)
+        # after merging, proposals will be rescaled to the original image size
+        merged_proposals = [
+            merge_aug_proposals(proposals, aug_img_meta, siamese_rpn_test_cfg)
+            for proposals, aug_img_meta in zip(aug_proposals, aug_img_metas)
+        ]
+        return merged_proposals
 
 class BBoxTestMixin(object):
 
