@@ -49,12 +49,16 @@ class DepthwiseXCorr(nn.Module):
         return out
 
 class DepthwiseRPN(RPN):
-    def __init__(self, in_channels, out_channels, kernel_size, target_size, n_classes):
+    def __init__(self, in_channels, out_channels, kernel_size, target_size, n_classes, use_attention=False):
         super(DepthwiseRPN, self).__init__()
         self.rpn_feat = DepthwiseXCorr(in_channels, out_channels, out_channels, padding=0)
         sz_after_conv = target_size-kernel_size+1
         self.rpn_cls = nn.Linear(out_channels*sz_after_conv*sz_after_conv, n_classes)
         self.rpn_reg = nn.Linear(out_channels*sz_after_conv*sz_after_conv, 4)
+
+        self.use_attention = use_attention
+        if self.use_attention:
+            self.attention = nn.Linear(out_channels * sz_after_conv * sz_after_conv, sz_after_conv * sz_after_conv)
 
     def forward(self, z_f, x_f):
         wz = z_f.size()[-2] * z_f.size()[-1]
@@ -62,8 +66,15 @@ class DepthwiseRPN(RPN):
         z_f = z_f/wx
         x_f = x_f/wz
         rpn_feat = self.rpn_feat(z_f, x_f)
-        cls = self.rpn_cls(rpn_feat.view(z_f.size()[0], -1))
-        loc = self.rpn_reg(rpn_feat.view(z_f.size()[0], -1))
+        N,C = rpn_feat.size()[:2]
+        if self.use_attention:
+            # Attention.
+            rpn_feat = rpn_feat.view(N, C, -1)
+            attention = self.attention(rpn_feat.view(N, -1).detach()).view(N, 1, -1)
+            rpn_feat = rpn_feat*attention
+        rpn_feat = rpn_feat.view(N, -1)
+        cls = self.rpn_cls(rpn_feat)
+        loc = self.rpn_reg(rpn_feat)
         return cls, loc
 
 @HEADS.register_module
@@ -197,8 +208,8 @@ class SiameseRPNHead(nn.Module):
              reduction_override=None):
         losses = dict()
         pos_inds = labels > 0
-        if len(pos_inds) > 0:
-            pos_bbox_pred = bbox_pred.view(bbox_pred.size(0), 4)[pos_inds]
+        pos_bbox_pred = bbox_pred.view(bbox_pred.size(0), 4)[pos_inds]
+        if len(pos_bbox_pred) > 0:
             losses['loss_bbox'] = self.loss_bbox(
                 pos_bbox_pred,
                 bbox_targets[pos_inds],
@@ -210,13 +221,12 @@ class SiameseRPNHead(nn.Module):
 
         all_boxes = delta2bbox(rpn_rois[:, 1:], bbox_pred, self.target_means, self.target_stds, None)
         bboxes = all_boxes[pos_inds]
-
-        gtbboxes = delta2bbox(rpn_rois[:, 1:], bbox_targets, self.target_means, self.target_stds, None)[pos_inds]
-        iou_target = bbox_overlaps(bboxes, gtbboxes, 'iou', is_aligned=True)
-
         labels = labels.float()
-        labels[pos_inds] = iou_target
-        #print('labels:', labels)
+        if len(bboxes)>0:
+            gtbboxes = delta2bbox(rpn_rois[:, 1:], bbox_targets, self.target_means, self.target_stds, None)[pos_inds]
+            iou_target = bbox_overlaps(bboxes, gtbboxes, 'iou', is_aligned=True)
+            labels[pos_inds] = iou_target
+            #print('labels:', labels)
 
         losses['loss_cls'] = self.loss_cls(
             cls_score,
@@ -227,9 +237,13 @@ class SiameseRPNHead(nn.Module):
 
         pred_bboxes = torch.cat([all_boxes, cls_score], dim=-1)
 
-        return dict(loss_siamese_rpn_cls=losses['loss_cls'],
-                    loss_siamese_rpn_bbox=losses['loss_bbox']), \
-               pred_bboxes
+        if 'loss_bbox' in losses.keys():
+            return dict(loss_siamese_rpn_cls=losses['loss_cls'],
+                        loss_siamese_rpn_bbox=losses['loss_bbox']), \
+                   pred_bboxes
+        else:
+            return dict(loss_siamese_rpn_cls=losses['loss_cls']), \
+                   pred_bboxes
 
 
     @force_fp32(apply_to=('cls_score', 'bbox_pred'))
