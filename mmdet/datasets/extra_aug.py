@@ -17,7 +17,7 @@ class PhotoMetricDistortion(object):
         self.saturation_lower, self.saturation_upper = saturation_range
         self.hue_delta = hue_delta
 
-    def __call__(self, img, boxes, labels):
+    def __call__(self, img, boxes, labels, *args):
         # random brightness
         if random.randint(2):
             delta = random.uniform(-self.brightness_delta,
@@ -61,7 +61,7 @@ class PhotoMetricDistortion(object):
         if random.randint(2):
             img = img[..., random.permutation(3)]
 
-        return img, boxes, labels
+        return (img, boxes, labels) + args
 
 
 class Expand(object):
@@ -73,9 +73,9 @@ class Expand(object):
             self.mean = mean
         self.min_ratio, self.max_ratio = ratio_range
 
-    def __call__(self, img, boxes, labels):
+    def __call__(self, img, boxes, labels, *args):
         if random.randint(2):
-            return img, boxes, labels
+            return (img, boxes, labels)+args
 
         h, w, c = img.shape
         ratio = random.uniform(self.min_ratio, self.max_ratio)
@@ -86,7 +86,7 @@ class Expand(object):
         expand_img[top:top + h, left:left + w] = img
         img = expand_img
         boxes += np.tile((left, top), 2)
-        return img, boxes, labels
+        return (img, boxes, labels)+args
 
 
 class RandomCrop(object):
@@ -96,12 +96,12 @@ class RandomCrop(object):
         self.sample_mode = (1, *min_ious, 0)
         self.min_crop_size = min_crop_size
 
-    def __call__(self, img, boxes, labels):
+    def __call__(self, img, boxes, labels, *args):
         h, w, c = img.shape
         while True:
             mode = random.choice(self.sample_mode)
             if mode == 1:
-                return img, boxes, labels
+                return (img, boxes, labels)+args
 
             min_iou = mode
             for i in range(50):
@@ -138,7 +138,7 @@ class RandomCrop(object):
                 boxes[:, :2] = boxes[:, :2].clip(min=patch[:2])
                 boxes -= np.tile(patch[:2], 2)
 
-                return img, boxes, labels
+                return (img, boxes, labels)+args
 
 
 class ExtraAugmentation(object):
@@ -156,8 +156,9 @@ class ExtraAugmentation(object):
         if random_crop is not None:
             self.transforms.append(RandomCrop(**random_crop))
 
-    def __call__(self, img, boxes, labels):
+    def __call__(self, img, boxes, labels, *args):
         img = img.astype(np.float32)
+        variables = (img, boxes, labels, args)
         for transform in self.transforms:
-            img, boxes, labels = transform(img, boxes, labels)
-        return img, boxes, labels
+            variables = transform(*variables)
+        return variables
