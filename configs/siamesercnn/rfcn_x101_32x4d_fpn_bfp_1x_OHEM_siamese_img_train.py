@@ -2,7 +2,7 @@
 model = dict(
     type='SiameseRCNN',
     pretrained='open-mmlab://msra/hrnetv2_w32',
-    img_train=False,
+    img_train=True,
     backbone=dict(
         type='HRNet',
         extra=dict(
@@ -170,8 +170,8 @@ test_cfg = dict(
     # e.g., nms=dict(type='soft_nms', iou_thr=0.5, min_score=0.05)
 )
 # dataset settings
-dataset_type = 'ImageNetVIDPairDataset'
-data_root = 'data/imagenet/Data/VID/train/'
+dataset_type = 'ImageNetDETVIDDataset'
+data_root = 'data/imagenet'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 data = dict(
@@ -179,7 +179,7 @@ data = dict(
     workers_per_gpu=2,
     train=dict(
         type=dataset_type,
-        ann_file=data_root + '../../../ImageSets/VID_train_pair.json',
+        ann_file=data_root + '/ImageSets/DET_train_30classes_experiment.json',
         img_prefix=data_root,
         multiscale_mode='range',
         img_scale=[(1333, 800), (800, 480)],
@@ -188,20 +188,17 @@ data = dict(
         flip_ratio=0.5,
         with_mask=False,
         with_crowd=False,
-        with_label=True,
-        with_trackid=True,
-        reverse_ratio=0.5),
+        with_label=True,),
     test=dict(
         type=dataset_type,
-        ann_file=data_root + '../../../ImageSets/VID_train_pair.json',
+        ann_file=data_root + '/ImageSets/DET_train_30classes_experiment.json',
         img_prefix=data_root,
-        img_scale=[(1300, 640)],#[(1100,720),(1000, 640),(900,560)],
+        img_scale=[(1000, 640)],#[(1100,720),(1000, 640),(900,560)],
         img_norm_cfg=img_norm_cfg,
         size_divisor=32,
         flip_ratio=0,
         with_mask=False,
         with_label=False,
-        with_trackid=False,
         test_mode=True))
 # optimizer
 optimizer = dict(type='SGD', lr=0.001, momentum=0.9, weight_decay=0.0001)
