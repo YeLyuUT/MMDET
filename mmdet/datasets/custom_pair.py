@@ -67,7 +67,8 @@ class CustomPairDataset(Dataset):
                  extra_aug=None,
                  resize_keep_ratio=True,
                  skip_img_without_anno=True,
-                 test_mode=False):
+                 test_mode=False,
+                 reverse_ratio=0.):
         # prefix of images path
         self.img_prefix = img_prefix
 
@@ -143,6 +144,8 @@ class CustomPairDataset(Dataset):
         self.resize_keep_ratio = resize_keep_ratio
         self.skip_img_without_anno = skip_img_without_anno
 
+        self.reverse_ratio = reverse_ratio
+
     def __len__(self):
         return len(self.img_infos)
 
@@ -189,6 +192,9 @@ class CustomPairDataset(Dataset):
                 continue
             return data
 
+    def swap(self, it1, it2):
+        return it2, it1
+
     def prepare_train_img(self, idx):
         img_info = self.img_infos[idx]
         # load image
@@ -213,6 +219,12 @@ class CustomPairDataset(Dataset):
                 scores = None
 
         ann1, ann2 = self.get_ann_info(idx)
+        # reverse the order.
+        reverse = True if np.random.rand() < self.reverse_ratio else False
+        if reverse:
+            ann1, ann2 = self.swap(ann1, ann2)
+            img1, img2 = self.swap(img1, img2)
+
         gt_bboxes1 = ann1['bboxes']
         gt_labels1 = ann1['labels']
         gt_trackids1 = ann1['trackids']
