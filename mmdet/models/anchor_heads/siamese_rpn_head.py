@@ -216,6 +216,7 @@ class SiameseRPNHead(nn.Module):
                 bbox_weights[pos_inds],
                 avg_factor=bbox_targets.size(0),
                 reduction_override=reduction_override)
+            print(losses['loss_bbox'])
 
         avg_factor = max(torch.sum(label_weights > 0).float().item(), 1.)
 
@@ -242,7 +243,8 @@ class SiameseRPNHead(nn.Module):
                         loss_siamese_rpn_bbox=losses['loss_bbox']), \
                    pred_bboxes
         else:
-            return dict(loss_siamese_rpn_cls=losses['loss_cls']), \
+            return dict(loss_siamese_rpn_cls=losses['loss_cls'],
+                        loss_siamese_rpn_bbox=losses['loss_cls'].new_zeros(1)), \
                    pred_bboxes
 
 
