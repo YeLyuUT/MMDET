@@ -66,21 +66,47 @@ class PSRoIPool(nn.Module):
 
 
 class PSRoIPoolAfterPointwiseConv(nn.Module):
-    def __init__(self, in_channels, out_channels, out_size, spatial_scale):
+    def __init__(self, in_channels, out_channels, out_size, spatial_scale, n_prev = 0):
         super(PSRoIPoolAfterPointwiseConv, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.ps_pool = PSRoIPool(out_size, spatial_scale)
-        self.pointWiseConv = nn.Conv2d(self.in_channels, self.out_channels, kernel_size=1, stride=1)
+        self.pointWiseConv = nn.Sequential(
+            nn.Conv2d(self.in_channels, self.out_channels, kernel_size=1, stride=1, bias=False),
+            nn.BatchNorm2d(self.out_channels),)
+
+
+        self.prev_module = None
+        self.post_module = None
+
         self.init_weights()
 
     def init_weights(self):
-        nn.init.normal_(self.pointWiseConv.weight, 0, 0.01)
-        nn.init.constant_(self.pointWiseConv.bias, 0)
+        for m in self.pointWiseConv.children():
+            if isinstance(m,nn.Conv2d):
+                nn.init.normal_(m.weight, 0, 0.01)
+
+    def add_n_prev_module(self, n_prev):
+        if n_prev>0:
+            self.prev_module = nn.Sequential(
+                nn.Sequential(nn.ReLU(inplace=True),
+                            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=1, stride=1, bias=False),
+                            nn.BatchNorm2d(self.out_channels)) for _ in range(n_prev))
+
+    def add_prev_module(self, m):
+        self.prev_module = m
+
+    def add_post_module(self, m):
+        self.post_module = m
 
     def forward(self, features, rois):
         features = self.pointWiseConv(features)
-        return self.ps_pool(features, rois)
+        if self.prev_module is not None:
+            features = self.prev_module(features)
+        features = self.ps_pool(features, rois)
+        if self.post_module is not None:
+            features = self.post_module(features)
+        return features
 
     def __repr__(self):
         format_str = self.__class__.__name__
