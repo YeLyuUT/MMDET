@@ -36,7 +36,8 @@ class BFP(nn.Module):
                  refine_type=None,
                  output_single_lvl=False,
                  conv_cfg=None,
-                 norm_cfg=None):
+                 norm_cfg=None,
+                 out_channels=None):
         super(BFP, self).__init__()
         assert refine_type in [None, 'conv', 'non_local']
 
@@ -48,9 +49,18 @@ class BFP(nn.Module):
 
         self.refine_level = refine_level
         self.refine_type = refine_type
+        self.out_channels = out_channels
         assert 0 <= self.refine_level < self.num_levels
 
-        if self.refine_type == 'conv':
+        if self.output_single_lvl:
+            self.refine = ConvModule(
+                sum(self.in_channels),
+                self.out_channels,
+                3,
+                padding=1,
+                conv_cfg=self.conv_cfg,
+                norm_cfg=self.norm_cfg)
+        elif self.refine_type == 'conv':
             self.refine = ConvModule(
                 self.in_channels,
                 self.in_channels,
@@ -65,7 +75,6 @@ class BFP(nn.Module):
                 use_scale=False,
                 conv_cfg=self.conv_cfg,
                 norm_cfg=self.norm_cfg)
-
 
     def init_weights(self):
         for m in self.modules():
@@ -87,12 +96,11 @@ class BFP(nn.Module):
                     inputs[i], size=gather_size, mode='nearest')
             feats.append(gathered)
 
-
-        bsf = sum(feats) / len(feats)
-        # step 2: refine gathered features
-        if self.refine_type is not None:
-            bsf = self.refine(bsf)
         if not self.output_single_lvl:
+            # step 2: refine gathered features
+            bsf = sum(feats) / len(feats)
+            if self.refine_type is not None:
+                bsf = self.refine(bsf)
             # step 3: scatter refined features to multi-levels by a residual path
             outs = []
             for i in range(self.num_levels):
@@ -104,8 +112,8 @@ class BFP(nn.Module):
                 outs.append(residual + inputs[i])
             return tuple(outs)
         else:
-            for i in range(self.num_levels):
-                feats[i] = feats[i]+bsf
-            out = torch.cat(feats, dim=1)
-            return tuple([out])
+            feats = torch.cat(feats, dim=1)
+            if self.refine_type is not None:
+                feats = [self.refine(feats)]
+            return [feats]
 
