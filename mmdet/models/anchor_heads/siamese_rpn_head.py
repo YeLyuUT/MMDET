@@ -53,6 +53,7 @@ class DepthwiseRPN(RPN):
         super(DepthwiseRPN, self).__init__()
         self.rpn_feat = DepthwiseXCorr(in_channels, out_channels, out_channels, padding=0)
         sz_after_conv = target_size-kernel_size+1
+        self.n_classes = n_classes
         self.rpn_cls = nn.Linear(out_channels*sz_after_conv*sz_after_conv, n_classes)
         self.rpn_reg = nn.Linear(out_channels*sz_after_conv*sz_after_conv, 4)
 
@@ -82,9 +83,11 @@ class SiameseRPNHead(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_sizes=[7], target_sizes=[19], feat_strides=[8],
                  target_means=[.0, .0, .0, .0],
                  target_stds=[1.0, 1.0, 1.0, 1.0],
+                 reg_class_agnostic = True,
                  loss_cls=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=1.0),
                  loss_bbox=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=1.0)):
         super(SiameseRPNHead, self).__init__()
+        self.reg_class_agnostic = reg_class_agnostic
         # spatial_scales is 1./feat_strides
         self.feat_strides = feat_strides
         assert len(self.feat_strides)==1, 'There should be only 1 level for Siamese RPN.'
@@ -196,6 +199,13 @@ class SiameseRPNHead(nn.Module):
 
         return labels, label_weights, bbox_targets, bbox_weights
 
+    def one_hot(self, y, n_cls):
+        batch_size = y.size()[-1]
+        # One hot encoding buffer that you create out of the loop and just keep reusing
+        y_onehot = y.new_zeros(batch_size, n_cls)
+        y_onehot.scatter_(-1, y.view(-1,1), value=1)
+        return y_onehot
+
     @force_fp32(apply_to=('cls_score', 'bbox_pred'))
     def loss(self,
              rpn_rois,
@@ -216,7 +226,6 @@ class SiameseRPNHead(nn.Module):
                 bbox_weights[pos_inds],
                 avg_factor=bbox_targets.size(0),
                 reduction_override=reduction_override)
-            print(losses['loss_bbox'])
 
         avg_factor = max(torch.sum(label_weights > 0).float().item(), 1.)
 
@@ -227,7 +236,6 @@ class SiameseRPNHead(nn.Module):
             gtbboxes = delta2bbox(rpn_rois[:, 1:], bbox_targets, self.target_means, self.target_stds, None)[pos_inds]
             iou_target = bbox_overlaps(bboxes, gtbboxes, 'iou', is_aligned=True)
             labels[pos_inds] = iou_target
-            #print('labels:', labels)
 
         losses['loss_cls'] = self.loss_cls(
             cls_score,
@@ -244,7 +252,8 @@ class SiameseRPNHead(nn.Module):
                    pred_bboxes
         else:
             return dict(loss_siamese_rpn_cls=losses['loss_cls'],
-                        loss_siamese_rpn_bbox=losses['loss_cls'].new_zeros(1)), \
+                        loss_siamese_rpn_bbox=losses['loss_cls'].new_zeros(
+                            losses['loss_cls'].shape)), \
                    pred_bboxes
 
 
