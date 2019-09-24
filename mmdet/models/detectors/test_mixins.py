@@ -66,6 +66,14 @@ class SiameseRPNTestMixin(object):
         return merged_proposals
 
 class BBoxTestMixin(object):
+    def simple_test_bboxes_scores(self, x, proposals):
+        rois = bbox2roi(proposals)
+        roi_feats = self.bbox_roi_extractor(
+            x[:len(self.bbox_roi_extractor.featmap_strides)], rois)
+        if self.with_shared_head:
+            roi_feats = self.shared_head(roi_feats)
+        cls_score, bbox_pred = self.bbox_head(roi_feats)
+        return cls_score, bbox_pred
 
     def simple_test_bboxes(self,
                            x,

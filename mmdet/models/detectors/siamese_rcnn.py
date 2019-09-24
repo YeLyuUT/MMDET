@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from mmdet.ops import nms
 
 from mmdet.core import bbox2result, bbox2roi, build_assigner, build_sampler, auto_fp16, bbox2delta, delta2bbox, \
-    bbox_overlaps
+    bbox_overlaps,multiclass_nms
 from .test_mixins import SiameseRPNTestMixin
 from ...datasets.transforms import BboxTransform
 import random
@@ -72,15 +72,15 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
         self.rois_tracked = None
         self.extracted_feat1 = None
         self.bbox_transform = BboxTransform()
-        self.img_train_method=1 #0 for both, 1 for left, 2 for right.
+        self.img_train_method = 1 #0 for both, 1 for left, 2 for right.
         self.img_train = img_train
         self.freeze_feature_extractor = freeze_feature_extractor
         if self.freeze_feature_extractor:
             self.freeze_parts(self.backbone)
             self.freeze_parts(self.neck)
         self.sequence_buffer = None
-        self.sequence_buffer_length = 4
-        self.sequence_gap = 2
+        self.sequence_buffer_length = 5
+        self.sequence_gap = 5
         self.sequence_counter = 0
         #self.nms = trNMS(cfg.SIAMESE.PANELTY_K, cfg.SIAMESE.HANNING_WINDOW_WEIGHT, cfg.SIAMESE.HANNING_WINDOW_SIZE_FACTOR)
 
@@ -105,25 +105,14 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
             param.requires_grad = True
 
     def _get_mapper_gt1_to_gt2(self, gt_bboxes_1, gt_ids_1, gt_bboxes_2, gt_ids_2):
-        def mapper(img_id, id1_query):
-            box1s = gt_bboxes_1[img_id]
-            id1s = gt_ids_1[img_id]
+        mappers=[dict() for _ in range(len(gt_bboxes_1))]
+        for img_id in range(len(mappers)):
             box2s = gt_bboxes_2[img_id]
-            id2s =  gt_ids_2[img_id]
-            mapped_gt2_box = None
-            mapped_gt2_id = None
-            for idx_1 in range(len(id1s)):
-                id1 = id1s[idx_1]
-                if id1==id1_query:
-                    for idx_2 in range(len(id2s)):
-                        id2 = id2s[idx_2]
-                        if id2==id1:
-                            mapped_gt2_box = box2s[idx_2:idx_2+1,:]
-                            mapped_gt2_id = gt_ids_2[idx_2:idx_2+1]
-                            return mapped_gt2_box, mapped_gt2_id
-            return mapped_gt2_box, mapped_gt2_id
-        return mapper
-
+            id2s = gt_ids_2[img_id]
+            for ind, id2 in enumerate(id2s):
+                mapped_gt2_box = box2s[ind:ind+1, :]
+                mappers[img_id][id2.item()] = mapped_gt2_box
+        return mappers
 
     def random_boxes_from_gts(self, gt_boxes, n_samples_per_gt):
         deltas = gt_boxes.new_zeros(len(gt_boxes), n_samples_per_gt, 4).uniform_(-1., 1.)
@@ -142,7 +131,6 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
         new_x1, new_y1, new_x2, new_y2 = (new_x - new_w / 2.0, new_y - new_h / 2.0, new_x + new_w / 2.0, new_y + new_h / 2.0)
         proposals = torch.cat([new_x1, new_y1, new_x2, new_y2], dim=-1).reshape(-1, 4)
         return proposals
-
 
     def forward_rpn(self,
                     extracted_feat,
@@ -254,6 +242,7 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
 
     def forward_track_train(self,
                             n_batches,
+                            proposal_list_1,
                             extracted_features_1,
                             extracted_features_2,
                             gt_bboxes1,
@@ -270,13 +259,14 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
         tracking_bbox_sampler = build_sampler(self.train_cfg.siameserpn.sampler_track, context=self)
         sampling_results = []
         for i in range(n_batches):
-            proposal_list_1 = self.random_boxes_from_gts(gt_bboxes1[i], 512)
-            assign_result_1 = tracking_bbox_assigner.assign(proposal_list_1,
+            proposal_list = self.random_boxes_from_gts(gt_bboxes1[i], 256)
+            #proposal_list = proposal_list_1[i]
+            assign_result_1 = tracking_bbox_assigner.assign(proposal_list,
                                                             gt_bboxes1[i],
                                                             None,
                                                             gt_trackids1[i])
             sampling_result_1 = tracking_bbox_sampler.sample(assign_result_1,
-                                                             proposal_list_1,
+                                                             proposal_list,
                                                              gt_bboxes1[i],
                                                              gt_trackids1[i])
 
@@ -290,13 +280,13 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
         for i in range(n_batches):
             res = sampling_results[i]
             lbls = res.pos_gt_labels
-            boxes = res.pos_bboxes
-            gt_boxes = res.pos_gt_bboxes
             for idx in range(len(lbls)):
                 lbl = lbls[idx]
-                box = boxes[idx:idx + 1]
-                gt_box = gt_boxes[idx:idx + 1]
-                mapped_gt2_box, mapped_gt2_id = mapper_gt1_to_gt2(i, lbl)
+                lbl_val = lbl.item()
+                if lbl_val in mapper_gt1_to_gt2[i].keys():
+                    mapped_gt2_box = mapper_gt1_to_gt2[i][lbl_val]
+                else:
+                    mapped_gt2_box = None
                 siameserpn_gt_boxes.append(mapped_gt2_box)
                 if mapped_gt2_box is not None:
                     siameserpn_gt_ids.append(lbl)
@@ -371,8 +361,8 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
         extracted_features = x
         # extracted_features[0].detach_()
         split_extracted_features = [torch.split(x, n_batches, dim=0) for x in extracted_features]
-        extracted_features_1 = tuple([x[0] for x in split_extracted_features])
-        extracted_features_2 = tuple([x[1] for x in split_extracted_features])
+        extracted_features_1 = [x[0] for x in split_extracted_features]
+        extracted_features_2 = [x[1] for x in split_extracted_features]
 
         gt_bboxes_ignore = None
         gt_masks = None
@@ -407,6 +397,7 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
         ##################################
         siameserpn_losses, proposal_list_track = self.forward_track_train(
             n_batches,
+            proposal_list[:n_batches],
             extracted_features_1,
             extracted_features_2,
             gt_bboxes1,
@@ -455,7 +446,6 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
         '''
         if self.sequence_buffer is None:
             self.sequence_buffer = []
-        self.sequence_buffer_length = 10
         if self.sequence_counter%self.sequence_gap==0:
             if len(self.sequence_buffer)==self.sequence_buffer_length:
                 self.sequence_buffer.pop(-1)
@@ -474,8 +464,26 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
                     feature, current_feature, rois_tracked, img_meta, cfg))
         proposal_list_siamese = \
             [torch.cat(tensor_tuples, dim=0) for tensor_tuples in zip(*list_of_proposal_list_siamese)]
+        # NMS.
         proposal_list_siamese = [nms(proposals, cfg.nms_thr)[0] for proposals in proposal_list_siamese]
         return proposal_list_siamese
+
+    def multi_boxes_det(self, current_feature, img_meta, proposal, cfg_track):
+        cls_score_list = []
+        assert len(current_feature)==1
+        roi_tracked = proposal.clone()
+        roi_tracked[1:] = roi_tracked[:4]
+        roi_tracked[0] = 0
+        roi_tracked = roi_tracked.view(-1, 5)
+        for tpl in self.sequence_buffer:
+            feature, det_bboxes, det_labels, rois_tracked = tpl
+            proposal_list = self.simple_test_siamese_rpn(current_feature, feature, roi_tracked, img_meta, cfg_track)
+            if len(proposal_list[0])>0:
+                # extract probability.
+                cls_score, bbox_pred = self.simple_test_bboxes_scores(feature,proposal_list)
+                cls_score_list.append(cls_score[0])
+        # TODO: maybe test max output instead.
+        return cls_score_list
 
     def reset_tracking(self):
         self.rois_tracked = None
@@ -490,36 +498,77 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
 
         proposal_list = self.simple_test_rpn(
             x, img_meta, self.test_cfg.rpn) if proposals is None else proposals
-        det_bboxes, det_labels = self.simple_test_bboxes(
-            x, img_meta, proposal_list, self.test_cfg.rcnn, rescale=rescale)
+
+        det_bboxes, det_labels = self.simple_test_bboxes(x, img_meta, proposal_list, None, rescale=rescale)
+        #print('det_bboxes:', det_bboxes.shape)
+        #print('det_labels:', det_labels.shape)
 
         proposal_list_siamese = None
+        det_bboxes_track = None
+        det_labels_track = None
         if self.sequence_buffer is not None and len(self.sequence_buffer)>0:
             #proposal_list_siamese = self.simple_test_siamese_rpn(self.extracted_feat1, x, self.rois_tracked, img_meta, self.test_cfg.siameserpn)
             proposal_list_siamese = self.multi_track(x, img_meta, self.test_cfg.siameserpn)
-            print(proposal_list_siamese)
+            #print(proposal_list_siamese)
 
         if proposal_list_siamese is not None and len(proposal_list_siamese[0])>0:
-            det_bboxes_track, det_labels_track = self.simple_test_bboxes(x, img_meta, proposal_list_siamese, self.test_cfg.rcnn, rescale=rescale)
+            #det_bboxes_track, det_labels_track = self.simple_test_bboxes(x, img_meta, proposal_list_siamese, self.test_cfg.rcnn, rescale=rescale)
+            trk_rois = bbox2roi(proposal_list_siamese)
+            trk_roi_feats = self.bbox_roi_extractor(x[:len(self.bbox_roi_extractor.featmap_strides)], trk_rois)
+            if self.with_shared_head:
+                trk_roi_feats = self.shared_head(trk_roi_feats)
+            trk_cls_scores, trk_bbox_preds = self.bbox_head(trk_roi_feats)
+            assert len(proposal_list_siamese)==1
+            for idx, (cls_score, proposal) in enumerate(zip(trk_cls_scores, proposal_list_siamese[0])):
+                cls_score_list = self.multi_boxes_det(x, img_meta, proposal, cfg_track=self.test_cfg.siameserpn)
+                cls_score_list.append(cls_score)
+                mean_score = torch.mean(torch.stack(cls_score_list, 0), 0)
+                trk_cls_scores[idx, :] = mean_score
+
+            det_bboxes_track, det_labels_track = self.bbox_head.get_det_bboxes(trk_rois,
+                                                                               trk_cls_scores,
+                                                                               None,
+                                                                               img_meta[0]['img_shape'],
+                                                                               img_meta[0]['scale_factor'],
+                                                                               rescale=rescale,
+                                                                               cfg=None)
+            #print(det_bboxes_track.shape)
+            det_bboxes_track = det_bboxes_track.repeat(1, det_labels_track.size()[-1])
+            #print('det_bboxes_track:', det_bboxes_track.shape)
+            #print('det_labels_track:', det_labels_track.shape)
+            '''
             if len(proposal_list_siamese)>0:
                 print('track')
                 #det_bboxes, det_labels = det_bboxes_track, det_labels_track
                 #det_bboxes, det_labels = proposal_list_siamese[0], det_labels.new_zeros((len(proposal_list_siamese[0])))
                 #det_bboxes, det_labels = det_bboxes_track, det_labels_track.new_zeros(len(det_bboxes_track))
                 #det_bboxes[:,-1]=1.
-                det_bboxes = proposal_list_siamese[0] #det_bboxes_track
-                det_labels = det_labels.new_zeros((len(proposal_list_siamese[0])))#det_labels_track
+
+                #det_bboxes = proposal_list_siamese[0] #det_bboxes_track
+                #det_labels = det_labels.new_zeros((len(proposal_list_siamese[0])))#det_labels_track
             else:
                 print('lost')
                 #self.reset_tracking()
                 return None
-        print(len(det_bboxes))
+            '''
+        if det_labels_track is not None and len(det_labels_track)>0:
+            det_bboxes = torch.cat([det_bboxes, det_bboxes_track], 0)
+            det_labels = torch.cat([det_labels, det_labels_track], 0)
+            #det_bboxes = det_bboxes_track
+            #det_labels = det_labels_track
+            #print('cat det_bboxes:', det_bboxes.shape)
+            #print('cat det_labels:', det_labels.shape)
+
+        det_bboxes, det_labels = multiclass_nms(det_bboxes, det_labels,
+                                                self.test_cfg.rcnn.score_thr, self.test_cfg.rcnn.nms,
+                                                self.test_cfg.rcnn.max_per_img)
+
         bbox_results = bbox2result(det_bboxes, det_labels, self.bbox_head.num_classes)
         extracted_feat1 = x
         rois_tracked = det_bboxes.new_zeros((len(det_bboxes), 5))
         for idx, box in enumerate(det_bboxes):
             rois_tracked[idx, 1:] = box[:4]
-        self.update_sequence_list((extracted_feat1,det_bboxes,det_labels,rois_tracked))
+        self.update_sequence_list((extracted_feat1, det_bboxes, det_labels, rois_tracked))
 
         if not self.with_mask:
             return bbox_results

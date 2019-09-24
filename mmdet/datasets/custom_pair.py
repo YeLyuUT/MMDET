@@ -314,7 +314,7 @@ class CustomPairDataset(Dataset):
     def prepare_test_img(self, idx):
         """Prepare an image for testing (multi-scale and flipping)"""
         img_info = self.img_infos[idx]
-        img = mmcv.imread(osp.join(self.img_prefix, img_info['filename1']))
+        img = mmcv.imread(osp.join(self.img_prefix, img_info['filename']))
         if self.proposals is not None:
             proposal = self.proposals[idx][:self.num_max_proposals]
             if not (proposal.shape[1] == 4 or proposal.shape[1] == 5):
