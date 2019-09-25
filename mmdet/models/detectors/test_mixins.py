@@ -1,6 +1,6 @@
 from mmdet.core import (bbox2roi, bbox_mapping, merge_aug_bboxes,
                         merge_aug_masks, merge_aug_proposals, multiclass_nms)
-
+import torch.nn.functional as F
 
 class RPNTestMixin(object):
 
@@ -75,6 +75,14 @@ class BBoxTestMixin(object):
         cls_score, bbox_pred = self.bbox_head(roi_feats)
         return cls_score, bbox_pred
 
+    def simple_test_rois_scores(self, x, rois):
+        roi_feats = self.bbox_roi_extractor(
+            x[:len(self.bbox_roi_extractor.featmap_strides)], rois)
+        if self.with_shared_head:
+            roi_feats = self.shared_head(roi_feats)
+        cls_score, bbox_pred = self.bbox_head(roi_feats)
+        return cls_score, bbox_pred
+
     def simple_test_bboxes(self,
                            x,
                            img_meta,
@@ -82,14 +90,10 @@ class BBoxTestMixin(object):
                            rcnn_test_cfg,
                            rescale=False):
         """Test only det bboxes without augmentation."""
-        rois = bbox2roi(proposals)
-        roi_feats = self.bbox_roi_extractor(
-            x[:len(self.bbox_roi_extractor.featmap_strides)], rois)
-        if self.with_shared_head:
-            roi_feats = self.shared_head(roi_feats)
-        cls_score, bbox_pred = self.bbox_head(roi_feats)
         img_shape = img_meta[0]['img_shape']
         scale_factor = img_meta[0]['scale_factor']
+        rois = bbox2roi(proposals)
+        cls_score, bbox_pred = self.simple_test_rois_scores(x, rois)
         det_bboxes, det_labels = self.bbox_head.get_det_bboxes(
             rois,
             cls_score,
@@ -98,6 +102,19 @@ class BBoxTestMixin(object):
             scale_factor,
             rescale=rescale,
             cfg=rcnn_test_cfg)
+        '''
+        tmp_det_bboxes = det_bboxes.view(-1, 4)
+        rois = tmp_det_bboxes.new_zeros(len(tmp_det_bboxes), 5)
+        rois[:, 1:] = tmp_det_bboxes
+        tmp_cls_score, tmp_bbox_pred = self.simple_test_rois_scores(x, rois)
+        if isinstance(tmp_cls_score, list):
+            tmp_cls_score = sum(tmp_cls_score) / float(len(tmp_cls_score))
+        tmp_cls_score = F.softmax(tmp_cls_score, dim=1) if tmp_cls_score is not None else None
+        n_cls = det_labels.size()[-1]
+        for ind, lbl in enumerate(det_labels):
+            for ind_ in range(n_cls):
+                det_labels[ind][ind_] = tmp_cls_score[ind*n_cls+ind_][ind_]
+        '''
         return det_bboxes, det_labels
 
     def aug_test_bboxes(self, feats, img_metas, proposal_list, rcnn_test_cfg):

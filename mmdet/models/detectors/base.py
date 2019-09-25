@@ -91,13 +91,15 @@ class BaseDetector(nn.Module):
 
     def vis_detections(self, ax, im, bboxes, labels, class_names, thresh, clr='g'):
         im = im[:, :, (2, 1, 0)]
-        ax.imshow(im)
+        ax.imshow(im, aspect='auto')
+        if bboxes is None:
+            return True
         for i in range(bboxes.shape[0]):
             score = bboxes[i, -1]
             bbox = bboxes[i, :]
             class_name = class_names[labels[i]]
             if score > thresh:
-                plt.gca().add_patch(
+                ax.add_patch(
                     plt.Rectangle((bbox[0], bbox[1]),
                                   bbox[2] - bbox[0],
                                   bbox[3] - bbox[1], fill=False,
@@ -106,12 +108,42 @@ class BaseDetector(nn.Module):
                 ax.text(
                     bbox[0], bbox[1]+11,
                     class_name+' %.2f'%(bbox[-1]),
+                    #'object %.2f' % (bbox[-1]),
                     fontsize=10,
                     family='serif',
                     bbox=dict(
                         facecolor=clr,  # if classes[i]==2 else 'r',
                         alpha=0.4, pad=0, edgecolor='none'),
                     color='white')
+
+    def show_bbox_result_custom(self, fig, ax, bbox_result, img_show, class_names, score_thr, winname='', waittime=0,clr='g'):
+        if bbox_result is not None:
+            bboxes = np.vstack(bbox_result)
+            # draw bounding boxes
+            labels = [
+                np.full(bbox.shape[0], i, dtype=np.int32)
+                for i, bbox in enumerate(bbox_result)
+            ]
+            labels = np.concatenate(labels)
+        else:
+            bboxes, labels = None, None
+        #print('input image.shape:', img_show.shape)
+        self.vis_detections(ax, img_show, bboxes, labels, class_names, score_thr, clr=clr)
+
+
+    def show_bbox_result_default(self, bbox_result, img_show, class_names, score_thr):
+        bboxes = np.vstack(bbox_result)
+        # draw bounding boxes
+        labels = [
+            np.full(bbox.shape[0], i, dtype=np.int32)
+            for i, bbox in enumerate(bbox_result)
+        ]
+        labels = np.concatenate(labels)
+        mmcv.imshow_det_bboxes(img_show,
+                               bboxes,
+                               labels,
+                               class_names=class_names,
+                               score_thr=score_thr)
 
     def show_result(self,
                     data,
@@ -120,8 +152,15 @@ class BaseDetector(nn.Module):
                     dataset=None,
                     score_thr=0.1,
                     use_custom_vis = True):
+        det_bbox_result, trk_bbox_result = None, None
         if isinstance(result, tuple):
-            bbox_result, segm_result = result
+            if len(result)==2:
+                bbox_result, segm_result = result
+            elif len(result)==3:
+                det_bbox_result, trk_bbox_result, bbox_result = result
+                segm_result = None
+            elif len(result)==4:
+                det_bbox_result, trk_bbox_result, bbox_result, segm_result = result
         else:
             bbox_result, segm_result = result, None
 
@@ -142,12 +181,13 @@ class BaseDetector(nn.Module):
                 ' of class names, not {}'.format(type(dataset)))
         if use_custom_vis:
             dpi = 100.0
-            fig = plt.figure(frameon=False, dpi=dpi)
-            fig.set_size_inches(imgs[0].shape[1] / dpi, imgs[0].shape[0] / dpi)
-            ax = plt.Axes(fig, [0., 0., 1., 1.])
+            fig,(ax_det,ax_trk,ax) = plt.subplots(1,3, frameon=False, dpi=dpi)
+            fig.set_size_inches(imgs[0].shape[1]*3 / dpi, imgs[0].shape[0] / dpi)
             ax.axis('off')
-            fig.add_axes(ax)
-
+            #if det_bbox_result is not None:
+            ax_det.axis('off')
+            #if trk_bbox_result is not None:
+            ax_trk.axis('off')
         for img, img_meta in zip(imgs, img_metas):
             h, w, _ = img_meta['img_shape']
             img_show = img[:h, :w, :]
@@ -155,37 +195,24 @@ class BaseDetector(nn.Module):
                 cv2.imshow('', img_show)
                 cv2.waitKey(0)
                 continue
-            bboxes = np.vstack(bbox_result)
-            # draw segmentation masks
-            if segm_result is not None:
-                segms = mmcv.concat_list(segm_result)
-                inds = np.where(bboxes[:, -1] > score_thr)[0]
-                for i in inds:
-                    color_mask = np.random.randint(
-                        0, 256, (1, 3), dtype=np.uint8)
-                    mask = maskUtils.decode(segms[i]).astype(np.bool)
-                    img_show[mask] = img_show[mask] * 0.5 + color_mask * 0.5
-            # draw bounding boxes
-            labels = [
-                np.full(bbox.shape[0], i, dtype=np.int32)
-                for i, bbox in enumerate(bbox_result)
-            ]
-            labels = np.concatenate(labels)
             if use_custom_vis:
-                print('input image.shape:',img_show.shape)
-                self.vis_detections(ax, img_show, bboxes, labels, class_names, score_thr, clr='g')
+                #if det_bbox_result is not None:
+                    #print('det_bbox_result:', det_bbox_result)
+                self.show_bbox_result_custom(fig, ax_det, det_bbox_result, img_show, class_names, score_thr, winname='det_bbox_result', waittime=1,clr='y')
+                #if trk_bbox_result is not None:
+                    #print('trk_bbox_result:', trk_bbox_result)
+                self.show_bbox_result_custom(fig, ax_trk, trk_bbox_result, img_show, class_names, score_thr, winname='trk_bbox_result', waittime=1,clr='m')
+                #print('bbox_result:', bbox_result)
+                self.show_bbox_result_custom(fig, ax, bbox_result, img_show, class_names, score_thr, winname='bbox_result',clr='g')
+                plt.tight_layout(0, h_pad=0.1, w_pad=0.1)
                 # convert canvas to image
                 fig.canvas.draw()
                 img_show = np.array(fig.canvas.renderer.buffer_rgba())
                 img_show = cv2.cvtColor(img_show, cv2.COLOR_RGB2BGR)
-                print('plot image.shape:',img_show.shape)
+                plt.close(fig)
+                #print('plot image.shape:', img_show.shape)
                 cv2.imshow('', img_show)
                 cv2.waitKey(0)
+                #plt.show()
             else:
-                mmcv.imshow_det_bboxes(
-                    img_show,
-                    bboxes,
-                    labels,
-                    class_names=class_names,
-                    score_thr=score_thr)
-
+                self.show_bbox_result_default(bbox_result, img_show, class_names, score_thr)
