@@ -6,6 +6,7 @@ import numpy as np
 import pycocotools.mask as maskUtils
 import torch.nn as nn
 import cv2
+from matplotlib import pyplot as plt
 
 from mmdet.core import auto_fp16, get_classes, tensor2imgs
 
@@ -88,12 +89,37 @@ class BaseDetector(nn.Module):
         else:
             return self.forward_test(img, img_meta, **kwargs)
 
+    def vis_detections(self, ax, im, bboxes, labels, class_names, thresh, clr='g'):
+        im = im[:, :, (2, 1, 0)]
+        ax.imshow(im)
+        for i in range(bboxes.shape[0]):
+            score = bboxes[i, -1]
+            bbox = bboxes[i, :]
+            class_name = class_names[labels[i]]
+            if score > thresh:
+                plt.gca().add_patch(
+                    plt.Rectangle((bbox[0], bbox[1]),
+                                  bbox[2] - bbox[0],
+                                  bbox[3] - bbox[1], fill=False,
+                                  edgecolor=clr, linewidth=1)
+                )
+                ax.text(
+                    bbox[0], bbox[1]+11,
+                    class_name+' %.2f'%(bbox[-1]),
+                    fontsize=10,
+                    family='serif',
+                    bbox=dict(
+                        facecolor=clr,  # if classes[i]==2 else 'r',
+                        alpha=0.4, pad=0, edgecolor='none'),
+                    color='white')
+
     def show_result(self,
                     data,
                     result,
                     img_norm_cfg,
                     dataset=None,
-                    score_thr=0.1):
+                    score_thr=0.1,
+                    use_custom_vis = True):
         if isinstance(result, tuple):
             bbox_result, segm_result = result
         else:
@@ -114,6 +140,13 @@ class BaseDetector(nn.Module):
             raise TypeError(
                 'dataset must be a valid dataset name or a sequence'
                 ' of class names, not {}'.format(type(dataset)))
+        if use_custom_vis:
+            dpi = 100.0
+            fig = plt.figure(frameon=False, dpi=dpi)
+            fig.set_size_inches(imgs[0].shape[1] / dpi, imgs[0].shape[0] / dpi)
+            ax = plt.Axes(fig, [0., 0., 1., 1.])
+            ax.axis('off')
+            fig.add_axes(ax)
 
         for img, img_meta in zip(imgs, img_metas):
             h, w, _ = img_meta['img_shape']
@@ -138,9 +171,21 @@ class BaseDetector(nn.Module):
                 for i, bbox in enumerate(bbox_result)
             ]
             labels = np.concatenate(labels)
-            mmcv.imshow_det_bboxes(
-                img_show,
-                bboxes,
-                labels,
-                class_names=class_names,
-                score_thr=score_thr)
+            if use_custom_vis:
+                print('input image.shape:',img_show.shape)
+                self.vis_detections(ax, img_show, bboxes, labels, class_names, score_thr, clr='g')
+                # convert canvas to image
+                fig.canvas.draw()
+                img_show = np.array(fig.canvas.renderer.buffer_rgba())
+                img_show = cv2.cvtColor(img_show, cv2.COLOR_RGB2BGR)
+                print('plot image.shape:',img_show.shape)
+                cv2.imshow('', img_show)
+                cv2.waitKey(0)
+            else:
+                mmcv.imshow_det_bboxes(
+                    img_show,
+                    bboxes,
+                    labels,
+                    class_names=class_names,
+                    score_thr=score_thr)
+
