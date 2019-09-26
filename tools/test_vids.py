@@ -131,7 +131,7 @@ def parse_args():
         os.environ['LOCAL_RANK'] = str(args.local_rank)
     return args
 
-def process_dataset(cfg, cfg_data_test, args,distributed,json_out):
+def process_dataset(cfg, cfg_data_test, args,distributed,json_out, args_out):
   dataset = build_dataset(cfg_data_test)
   data_loader = build_dataloader(
     dataset,
@@ -161,24 +161,24 @@ def process_dataset(cfg, cfg_data_test, args,distributed,json_out):
     outputs = multi_gpu_test(model, data_loader, args.tmpdir)
 
   rank, _ = get_dist_info()
-  if args.out and rank == 0:
-    print('\nwriting results to {}'.format(args.out))
-    mmcv.dump(outputs, args.out)
+  if args_out and rank == 0:
+    print('\nwriting results to {}'.format(args_out))
+    mmcv.dump(outputs, args_out)
     eval_types = args.eval
     if eval_types:
       print('Starting evaluate {}'.format(' and '.join(eval_types)))
       if eval_types == ['proposal_fast']:
-        result_file = args.out
+        result_file = args_out
         coco_eval(result_file, eval_types, dataset.coco)
       else:
         if not isinstance(outputs[0], dict):
-          result_files = results2json(dataset, outputs, args.out)
+          result_files = results2json(dataset, outputs, args_out)
           coco_eval(result_files, eval_types, dataset.coco)
         else:
           for name in outputs[0]:
             print('\nEvaluating {}'.format(name))
             outputs_ = [out[name] for out in outputs]
-            result_file = args.out + '.{}'.format(name)
+            result_file = args_out + '.{}'.format(name)
             result_files = results2json(dataset, outputs_,
                                         result_file)
             coco_eval(result_files, eval_types, dataset.coco)
@@ -200,12 +200,6 @@ def main():
         ('Please specify at least one operation (save or show the results) '
          'with the argument "--out" or "--show" or "--json_out"')
 
-    if args.out is not None and not args.out.endswith(('.pkl', '.pickle')):
-        raise ValueError('The output file must be a pkl file.')
-
-    if args.json_out is not None and args.json_out.endswith('.json'):
-        args.json_out = args.json_out[:-5]
-
     cfg = mmcv.Config.fromfile(args.config)
     # set cudnn_benchmark
     if cfg.get('cudnn_benchmark', False):
@@ -223,21 +217,35 @@ def main():
     # build the dataloader
     # TODO: support multiple images per gpu (only minor changes are needed)
     if osp.isdir(cfg.data.test['ann_file']):
-      json_out = args.json_out
-      assert osp.isdir(json_out), 'Directory "{}" does not exists.'.format(json_out)
+      if args.json_out:
+        json_out = args.json_out
+        assert osp.isdir(json_out), 'Directory "{}" does not exists.'.format(json_out)
+      if args.out:
+        args_out = args.out
+        assert osp.isdir(args_out), 'Directory "{}" does not exists.'.format(args_out)
       VID_jsons_dir = cfg.data.test['ann_file']
-      output_dir = json_out
       fList = glob.glob1(VID_jsons_dir, "*.json")
       fCounter = len(fList)
       for i in range(fCounter):
         annfname = osp.join(VID_jsons_dir, '%06d.json'%(i))
-        json_out_path = osp.join(output_dir, '%06d'%(i))
         cfg.data.test['ann_file'] = annfname
-        print(json_out_path)
-        process_dataset(cfg, cfg.data.test, args, distributed, json_out_path)
+        json_out_path = json_out
+        if json_out:
+          json_out_path = osp.join(json_out, '%06d' % (i))
+          print(json_out_path)
+        args_out_path = args_out
+        if args_out:
+          args_out_path = osp.join(args_out, '%06d.pkl' % (i))
+          print(args_out_path)
+        process_dataset(cfg, cfg.data.test, args, distributed, json_out_path, args_out_path)
     else:
+      if args.out is not None and not args.out.endswith(('.pkl', '.pickle')):
+        raise ValueError('The output file must be a pkl file.')
+      if args.json_out is not None and args.json_out.endswith('.json'):
+        args.json_out = args.json_out[:-5]
+      print(args.out)
       print(args.json_out)
-      process_dataset(cfg, cfg.data.test, args, distributed, args.json_out)
+      process_dataset(cfg, cfg.data.test, args, distributed, args.json_out, args.out)
 
 if __name__ == '__main__':
     main()
