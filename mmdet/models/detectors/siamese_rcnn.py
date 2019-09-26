@@ -535,7 +535,7 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
         return proposal_list
 
     # roi oriented.
-    def simple_test(self, img, img_meta, proposals=None, rescale=False):
+    def simple_test(self, img, img_meta, proposals=None, rescale=False, json_out = True):
         """Test without augmentation."""
         assert self.with_bbox, "Bbox head must be implemented."
         det_bbox_result = None
@@ -543,16 +543,17 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
         bbox_results = None
         det_bboxes, det_labels = None, None
         x = self.extract_feat(img)
-        proposal_list = self.simple_test_rpn(x, img_meta, self.test_cfg.rpn) if proposals is None else proposals
-        det_bboxes, det_labels = self.simple_test_bboxes(x, img_meta, proposal_list, None, rescale=rescale)
+        proposal_list_raw = self.simple_test_rpn(x, img_meta, self.test_cfg.rpn) if proposals is None else proposals
+        det_bboxes, det_labels = self.simple_test_bboxes(x, img_meta, proposal_list_raw, None, rescale=rescale)
         # prune proposals.
         proposal_threshold = 0.2
         det_bboxes = det_bboxes[:, 4:].contiguous().view(-1, 4)
         det_labels = det_labels[:, 1:].contiguous().view(-1, 1)
         inds = det_labels[:, 0] > proposal_threshold
         proposal_list = [torch.cat([det_bboxes[inds], det_labels[inds]], dim=-1)]
-        print('N det:', len(proposal_list[0]))
-        det_bbox_result = self.proposals_to_box_result(proposal_list, self.test_cfg.rcnn)
+        #print('N det:', len(proposal_list[0]))
+        if not json_out:
+            det_bbox_result = self.proposals_to_box_result(proposal_list, self.test_cfg.rcnn)
 
         proposal_list_siamese = None
         if self.sequence_buffer is not None and len(self.sequence_buffer) > 0:
@@ -561,25 +562,37 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
             assert isinstance(proposal_list_siamese, list)
 
         if proposal_list_siamese is not None and len(proposal_list_siamese) > 0 and len(proposal_list_siamese[0]) > 0:
-            print('N trk:', len(proposal_list_siamese[0]))
-            trk_bbox_result = self.proposals_to_box_result(proposal_list_siamese, self.test_cfg.rcnn)
+            #print('N trk:', len(proposal_list_siamese[0]))
+            if not json_out:
+                trk_bbox_result = self.proposals_to_box_result(proposal_list_siamese, self.test_cfg.rcnn)
             proposal_list[0] = torch.cat([proposal_list[0], proposal_list_siamese[0]], dim=0)
-
+            proposal_list_clean = self.proposals_nms(proposal_list, self.test_cfg.rcnn)
+            proposal_list_clean[0][:, -1] = 1
+            proposal_list_raw[0] = torch.cat([proposal_list_raw[0], proposal_list_clean[0]], dim=0)
         #bbox_results = self.proposals_to_box_result(proposal_list, self.test_cfg.rcnn)
         proposal_list = self.proposals_nms(proposal_list, self.test_cfg.rcnn)
-        det_bboxes, det_labels = self.simple_test_bboxes(x, img_meta, proposal_list, self.test_cfg.rcnn, rescale=rescale)
+        proposal_list_raw = self.proposals_nms(proposal_list_raw, self.test_cfg.rcnn)
+        det_bboxes, det_labels = self.simple_test_bboxes(x, img_meta, proposal_list_raw, self.test_cfg.rcnn, rescale=rescale)
+
         bbox_results = bbox2result(det_bboxes, det_labels, self.bbox_head.num_classes)
 
         rois = bbox2roi(proposal_list)
         self.update_sequence_list((x, None, None, rois))
-
         ##################
-        if not self.with_mask:
-            return det_bbox_result, trk_bbox_result, bbox_results
+        if not json_out:
+            if not self.with_mask:
+                return det_bbox_result, trk_bbox_result, bbox_results
+            else:
+                segm_results = self.simple_test_mask(
+                    x, img_meta, det_bboxes, det_labels, rescale=rescale)
+                return det_bbox_result, trk_bbox_result, bbox_results, segm_results
         else:
-            segm_results = self.simple_test_mask(
-                x, img_meta, det_bboxes, det_labels, rescale=rescale)
-            return det_bbox_result, trk_bbox_result, bbox_results, segm_results
+            if not self.with_mask:
+                return bbox_results
+            else:
+                segm_results = self.simple_test_mask(
+                    x, img_meta, det_bboxes, det_labels, rescale=rescale)
+                return bbox_results, segm_results
 
     # non-standard
     def simple_test_1(self, img, img_meta, proposals=None, rescale=False):
