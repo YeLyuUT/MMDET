@@ -151,7 +151,8 @@ class BaseDetector(nn.Module):
                     img_norm_cfg,
                     dataset=None,
                     score_thr=0.1,
-                    use_custom_vis = True):
+                    use_custom_vis=True,
+                    im_name=None):
         det_bbox_result, trk_bbox_result = None, None
         if isinstance(result, tuple):
             if len(result)==2:
@@ -160,7 +161,7 @@ class BaseDetector(nn.Module):
                 det_bbox_result, trk_bbox_result, bbox_result = result
                 segm_result = None
             elif len(result)==4:
-                det_bbox_result, trk_bbox_result, bbox_result, segm_result = result
+                det_bbox_result, trk_bbox_result, bbox_result, bbox_result_seq_nms = result
         else:
             bbox_result, segm_result = result, None
 
@@ -181,9 +182,11 @@ class BaseDetector(nn.Module):
                 ' of class names, not {}'.format(type(dataset)))
         if use_custom_vis:
             dpi = 100.0
-            fig,(ax_det,ax_trk,ax) = plt.subplots(1,3, frameon=False, dpi=dpi)
-            fig.set_size_inches(imgs[0].shape[1]*3 / dpi, imgs[0].shape[0] / dpi)
+            fig,((ax_det,ax_trk),(ax,ax_seqnms)) = plt.subplots(2, 2, frameon=False, dpi=dpi)
+            fig.set_size_inches(imgs[0].shape[1] * 2 / dpi/1.5, imgs[0].shape[0] * 2  / dpi/1.5)
+            #fig.set_size_inches(imgs[0].shape[1]*3 / dpi, imgs[0].shape[0] / dpi)
             ax.axis('off')
+            ax_seqnms.axis('off')
             #if det_bbox_result is not None:
             ax_det.axis('off')
             #if trk_bbox_result is not None:
@@ -198,21 +201,27 @@ class BaseDetector(nn.Module):
             if use_custom_vis:
                 #if det_bbox_result is not None:
                     #print('det_bbox_result:', det_bbox_result)
-                self.show_bbox_result_custom(fig, ax_det, det_bbox_result, img_show, class_names, score_thr, winname='det_bbox_result', waittime=1,clr='y')
+                self.show_bbox_result_custom(fig, ax_det, det_bbox_result, img_show, ['objects']*2, score_thr, winname='det_bbox_result', waittime=1,clr='y')
                 #if trk_bbox_result is not None:
                     #print('trk_bbox_result:', trk_bbox_result)
-                self.show_bbox_result_custom(fig, ax_trk, trk_bbox_result, img_show, class_names, score_thr, winname='trk_bbox_result', waittime=1,clr='m')
+                self.show_bbox_result_custom(fig, ax_trk, trk_bbox_result, img_show, ['objects']*2, score_thr, winname='trk_bbox_result', waittime=1,clr='m')
                 #print('bbox_result:', bbox_result)
                 self.show_bbox_result_custom(fig, ax, bbox_result, img_show, class_names, score_thr, winname='bbox_result',clr='g')
+
+                self.show_bbox_result_custom(fig, ax_seqnms, bbox_result_seq_nms, img_show, class_names, score_thr, winname='bbox_result',clr='g')
+
                 plt.tight_layout(0, h_pad=0.1, w_pad=0.1)
-                # convert canvas to image
-                fig.canvas.draw()
-                img_show = np.array(fig.canvas.renderer.buffer_rgba())
-                img_show = cv2.cvtColor(img_show, cv2.COLOR_RGB2BGR)
-                plt.close(fig)
-                #print('plot image.shape:', img_show.shape)
-                cv2.imshow('', img_show)
-                cv2.waitKey(0)
-                #plt.show()
+                if im_name is not None:
+                    fig.savefig(im_name, dpi=dpi)
+                    plt.close('all')
+                else:
+                    # convert canvas to cv2 image
+                    fig.canvas.draw()
+                    img_show = np.array(fig.canvas.renderer.buffer_rgba())
+                    img_show = cv2.cvtColor(img_show, cv2.COLOR_RGB2BGR)
+                    plt.close(fig)
+                    cv2.imshow('', img_show)
+                    cv2.waitKey(0)
+
             else:
                 self.show_bbox_result_default(bbox_result, img_show, class_names, score_thr)
