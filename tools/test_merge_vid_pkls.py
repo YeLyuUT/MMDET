@@ -21,6 +21,11 @@ def parse_args():
     help='merged filename',
     type=str,
     default='./work_dirs/vid_val_output.pkl')
+  parser.add_argument(
+    '--threshold',
+    help='filter out det with score lower than threshold.',
+    type=float,
+    default=0.)
   args = parser.parse_args()
   return args
 
@@ -29,7 +34,8 @@ def main():
   vid_jsons_dir = args.vid_jsons_dir
   output_pkls_dir = args.output_pkls_dir
   out_file = args.out_file
-
+  threshold = args.threshold
+  
   assert osp.isdir(output_pkls_dir)
   fList_vid = glob.glob1(vid_jsons_dir, "*.json")
   fCounter_vid = len(fList_vid)
@@ -44,6 +50,10 @@ def main():
     anns = mmcv.load(json_vid_bbox)
     dets = mmcv.load(pkl_out_bbox)
     for det in dets:
+      det = list(det)
+      for ind, clsdet in enumerate(det):
+        if threshold>0 and len(clsdet)>0:
+          det[ind] = clsdet[clsdet[:,-1]>threshold]
       all_dets.append(det)
     last_count=last_count+len(anns)
    
