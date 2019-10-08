@@ -11,7 +11,7 @@ from .dataset_wrappers import ConcatDataset, RepeatDataset
 from .extra_aug import ExtraAugmentation
 from .registry import DATASETS
 from .builder import build_dataset
-from .imagenet import ImageNetDETVIDDataset,ImageNetVIDPairDataset
+from .imagenet import ImageNetDETVIDDataset,ImageNetVIDPairDataset,ImageNetVIDBlockDataset
 
 __all__ = [
     'CustomDataset', 'XMLDataset', 'CocoDataset', 'VOCDataset',
@@ -19,5 +19,5 @@ __all__ = [
     'build_dataloader', 'to_tensor', 'random_scale', 'show_ann',
     'ConcatDataset', 'RepeatDataset', 'ExtraAugmentation', 'WIDERFaceDataset',
     'DATASETS', 'build_dataset',
-    'ImageNetDETVIDDataset','CustomPairDataset','ImageNetVIDPairDataset',
+    'ImageNetDETVIDDataset','CustomPairDataset','ImageNetVIDPairDataset','ImageNetVIDBlockDataset',
 ]
