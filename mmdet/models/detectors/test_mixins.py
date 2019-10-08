@@ -43,6 +43,20 @@ class SiameseRPNTestMixin(object):
                                                              score_threshold=siamese_rpn_test_cfg.score_threshold)
         return proposals
 
+    def simple_test_siamese_rpn_with_non_suppressed_output(self, feat1, feat2, rpn_rois_1, img_meta, siamese_rpn_test_cfg):
+        cls_score, bbox_pred, target_ranges, target_metas = self.siameserpn_head(feat1, feat2, rpn_rois_1, img_meta)
+        proposal_inputs = (len(feat1), rpn_rois_1, cls_score, bbox_pred, target_metas, siamese_rpn_test_cfg,)
+        bboxes_list, scores_list = self.siameserpn_head.get_bboxes(*proposal_inputs)
+        proposals = self.siameserpn_head.get_rois_from_boxes(len(feat1),
+                                                             bboxes_list,
+                                                             scores_list,
+                                                             score_threshold=siamese_rpn_test_cfg.score_threshold)
+        proposals_non_suppressed = self.siameserpn_head.get_rois_from_boxes(len(feat1),
+                                                             bboxes_list,
+                                                             scores_list,
+                                                             score_threshold=0)
+        return proposals, proposals_non_suppressed
+
     def aug_test_siamese_rpn(self, feat1s, feat2s, rpn_rois_1s, img_metas, siamese_rpn_test_cfg):
         imgs_per_gpu = len(img_metas[0])
         aug_proposals = [[] for _ in range(imgs_per_gpu)]
