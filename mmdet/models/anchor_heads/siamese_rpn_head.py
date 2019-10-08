@@ -85,9 +85,11 @@ class SiameseRPNHead(nn.Module):
                  target_stds=[1.0, 1.0, 1.0, 1.0],
                  reg_class_agnostic = True,
                  loss_cls=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=1.0),
-                 loss_bbox=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=1.0)):
+                 loss_bbox=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=1.0),
+                 psroi_align_kernel=False):
         super(SiameseRPNHead, self).__init__()
         self.reg_class_agnostic = reg_class_agnostic
+        self.psroi_align_kernel = psroi_align_kernel
         # spatial_scales is 1./feat_strides
         self.feat_strides = feat_strides
         assert len(self.feat_strides)==1, 'There should be only 1 level for Siamese RPN.'
@@ -108,18 +110,19 @@ class SiameseRPNHead(nn.Module):
         assert len(kernel_sizes)==1 and len(target_sizes)==1, (len(kernel_sizes), len(target_sizes))
 
     def _get_kernel_crop_modules(self, in_channels, kernel_size, spatial_scale):
-        kernel_crop_channels = 10
-        kernel_crop_module = \
-            PSRoIPoolAfterPointwiseConv(in_channels, kernel_crop_channels*kernel_size*kernel_size, kernel_size, spatial_scale,n_prev=2)
-        kernel_crop_module.add_post_module(
-                              nn.Sequential(nn.ReLU(inplace=True),
-                                            nn.Conv2d(kernel_crop_channels,
-                                                      in_channels,
-                                                      kernel_size=1, stride=1, bias=False),
-                                            nn.BatchNorm2d(in_channels),)
-                                           )
-
-        kernel_crop_module = RoIAlign(kernel_size, spatial_scale)
+        if self.psroi_align_kernel:
+            kernel_crop_channels = 10
+            kernel_crop_module = \
+                PSRoIPoolAfterPointwiseConv(in_channels, kernel_crop_channels*kernel_size*kernel_size, kernel_size, spatial_scale,n_prev=2)
+            kernel_crop_module.add_post_module(
+                                  nn.Sequential(nn.ReLU(inplace=True),
+                                                nn.Conv2d(kernel_crop_channels,
+                                                          in_channels,
+                                                          kernel_size=1, stride=1, bias=False),
+                                                nn.BatchNorm2d(in_channels),)
+                                               )
+        else:
+            kernel_crop_module = RoIAlign(kernel_size, spatial_scale)
         return kernel_crop_module.cuda()
 
     def _get_target_crop_modules(self, in_channels, kernel_size, spatial_scale):
@@ -264,14 +267,14 @@ class SiameseRPNHead(nn.Module):
                    cls_scores,
                    bbox_preds,
                    target_metas,
-                   cfg=None):
+                   cfg=None,):
         assert len(cls_scores)==1 and len(bbox_preds)==1 and len(target_metas)==1
         cls_scores = cls_scores[0]
         bbox_preds = bbox_preds[0]
         target_metas = target_metas[0]
         bboxes_list = [[] for _ in range(n_batches)]
         scores_list = [[] for _ in range(n_batches)]
-        for roi, cls_score, bbox_pred, target_meta in zip(rois, cls_scores,bbox_preds,target_metas):
+        for roi, cls_score, bbox_pred, target_meta in zip(rois, cls_scores, bbox_preds, target_metas):
             roi = roi.view(1, -1)
             cls_score = cls_score.view(1, -1)
             bbox_pred = bbox_pred.view(1, -1)
@@ -303,8 +306,9 @@ class SiameseRPNHead(nn.Module):
             rpn_rois = bboxes.new_zeros((bboxes.shape[0], bboxes.shape[1]+1))
             rpn_rois[:, :4] = bboxes
             rpn_rois[:, 4] = scores
-            inds = scores>score_threshold
-            rpn_rois = rpn_rois[inds,:]
+            if score_threshold>0:
+                inds = scores>score_threshold
+                rpn_rois = rpn_rois[inds,:]
             rpn_roi_list.append(rpn_rois)
         return rpn_roi_list
 
