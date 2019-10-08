@@ -63,3 +63,32 @@ def multiclass_nms(multi_bboxes,
         labels = multi_bboxes.new_zeros((0, ), dtype=torch.long)
 
     return bboxes, labels
+
+def multiclass(multi_bboxes,
+                multi_scores,
+                score_factors=None):
+    num_classes = multi_scores.shape[1]
+    bboxes, labels = [], []
+    for i in range(1, num_classes):
+        # get bboxes and scores of this class
+        if multi_bboxes.shape[1] == 4:
+            _bboxes = multi_bboxes[:, :]
+        else:
+            _bboxes = multi_bboxes[:, i * 4:(i + 1) * 4]
+        _scores = multi_scores[:, i]
+        if score_factors is not None:
+            _scores *= score_factors[:]
+        cls_dets = torch.cat([_bboxes, _scores[:, None]], dim=1)
+        cls_labels = multi_bboxes.new_full((cls_dets.shape[0], ),
+                                           i - 1,
+                                           dtype=torch.long)
+        bboxes.append(cls_dets)
+        labels.append(cls_labels)
+    if bboxes:
+        bboxes = torch.cat(bboxes)
+        labels = torch.cat(labels)
+    else:
+        bboxes = multi_bboxes.new_zeros((0, 5))
+        labels = multi_bboxes.new_zeros((0, ), dtype=torch.long)
+
+    return bboxes, labels
