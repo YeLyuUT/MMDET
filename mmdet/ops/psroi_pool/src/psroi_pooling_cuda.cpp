@@ -10,7 +10,7 @@
   CHECK_CUDA(x);       \
   CHECK_CONTIGUOUS(x)
 
-int psroi_pooling_forward_cuda(int pooled_height, int pooled_width, float spatial_scale, int group_size, int output_dim,
+int psroi_pooling_forward_cuda(int pooled_height, int pooled_width, float spatial_scale, int sample_num, int group_size, int output_dim,
                                 at::Tensor features, at::Tensor rois, at::Tensor output, at::Tensor mapping_channel)
 {
 	CHECK_INPUT(features);
@@ -30,14 +30,14 @@ int psroi_pooling_forward_cuda(int pooled_height, int pooled_width, float spatia
     int width = features.size(3);
 
 	PSROIPoolForwardLauncher(
-    features, rois, mapping_channel, spatial_scale,
+    features, rois, mapping_channel, spatial_scale, sample_num,
     num_rois, height, width, channels,
     pooled_height, pooled_width, group_size, output_dim, output);
 	return 1;
 }
 
 
-int psroi_pooling_backward_cuda(int pooled_height, int pooled_width, float spatial_scale, int output_dim,
+int psroi_pooling_backward_cuda(int pooled_height, int pooled_width, float spatial_scale, int sample_num, int output_dim,
 at::Tensor top_grad, at::Tensor rois, at::Tensor bottom_grad, at::Tensor mapping_channel)
 {
     CHECK_INPUT(top_grad);
@@ -60,7 +60,7 @@ at::Tensor top_grad, at::Tensor rois, at::Tensor bottom_grad, at::Tensor mapping
 
     PSROIPoolBackwardLauncher(
     top_grad, rois, mapping_channel, batch_size,
-    num_rois, spatial_scale, channels, height, width,
+    num_rois, spatial_scale, sample_num, channels, height, width,
     pooled_width, pooled_height, output_dim, bottom_grad);
     return 1;
 }
