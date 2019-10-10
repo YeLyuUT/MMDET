@@ -45,7 +45,7 @@ model = dict(
         loss_bbox=dict(type='SmoothL1Loss', beta=1.0, loss_weight=1.0)),
     bbox_roi_extractor=dict(
         type='SingleRoIExtractor',
-        roi_layer=dict(type='PSRoIPoolAfterPointwiseConv', in_channels=256, out_channels=10*7*7, out_size=7, n_prev=1),
+        roi_layer=dict(type='PSRoIPoolAfterPointwiseConv', in_channels=256, out_channels=10*7*7, out_size=7, sample_num=2, n_prev=0),
         out_channels=10,
         featmap_strides=[4, 8, 16, 32]),
     bbox_head=dict(
@@ -191,7 +191,7 @@ data = dict(
         with_trackid=False,
         test_mode=True))
 # optimizer
-optimizer = dict(type='SGD', lr=0.001, momentum=0.9, weight_decay=0.0001)
+optimizer = dict(type='SGD', lr=0.002, momentum=0.9, weight_decay=0.0001)
 optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
 # learning policy
 lr_config = dict(
@@ -199,11 +199,11 @@ lr_config = dict(
     warmup='linear',
     warmup_iters=50,
     warmup_ratio=1.0 / 3,
-    step=[3,4])
+    step=[3, 4])
 checkpoint_config = dict(interval=1)
 # yapf:disable
 log_config = dict(
-    interval=50,
+    interval=5,
     hooks=[
         dict(type='TextLoggerHook'),
         #dict(type='TensorboardLoggerHook')

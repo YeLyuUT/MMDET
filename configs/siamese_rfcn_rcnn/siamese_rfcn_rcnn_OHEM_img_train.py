@@ -46,14 +46,14 @@ model = dict(
         loss_bbox=dict(type='SmoothL1Loss', beta=1.0, loss_weight=1.0)),
     bbox_roi_extractor=dict(
         type='SingleRoIExtractor',
-        roi_layer=dict(type='RoIAlign', out_size=7, sample_num=2),
-        out_channels=256,
+        roi_layer=dict(type='PSRoIPoolAfterPointwiseConv', in_channels=256, out_channels=10*7*7, out_size=7, sample_num=2, n_prev=0),
+        out_channels=10,
         featmap_strides=[4, 8, 16, 32]),
     bbox_head=dict(
         type='SharedFCBBoxHead',
-        num_fcs=2,
-        in_channels=256,
-        fc_out_channels=1024,
+        num_fcs=1,
+        in_channels=10,
+        fc_out_channels=2048,
         roi_feat_size=7,
         num_classes=31,
         target_means=[0., 0., 0., 0.],
@@ -154,7 +154,7 @@ data_root = 'data/imagenet'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 data = dict(
-    imgs_per_gpu=2,
+    imgs_per_gpu=3,
     workers_per_gpu=4,
     train=dict(
         type=dataset_type,
