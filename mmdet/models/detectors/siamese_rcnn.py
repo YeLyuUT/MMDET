@@ -740,6 +740,9 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
         proposal_list = self.simple_test_rpn(
             x, img_meta, self.test_cfg.rpn) if proposals is None else proposals
 
+        det_bboxes, det_labels = self.simple_test_bboxes(x, img_meta, proposal_list, None, rescale=False)
+        proposal_list = [torch.cat([det_bboxes, det_labels], dim=-1)]
+
         det_bboxes, det_labels = self.simple_test_bboxes(
             x, img_meta, proposal_list, self.test_cfg.rcnn, rescale=rescale)
         bbox_results = bbox2result(det_bboxes, det_labels,
