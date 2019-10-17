@@ -20,7 +20,7 @@ class RPN(nn.Module):
         raise NotImplementedError
 
 class DepthwiseXCorr(nn.Module):
-    def __init__(self, in_channels, hidden, out_channels, kernel_size=1, head_kernel_size=3, padding=0):
+    def __init__(self, in_channels, hidden, out_channels, kernel_size=1, head_kernel_size=1, padding=0):
         super(DepthwiseXCorr, self).__init__()
         self.conv_kernel = nn.Sequential(
             nn.Conv2d(in_channels, hidden, kernel_size=kernel_size, bias=False),
@@ -62,10 +62,10 @@ class DepthwiseRPN(RPN):
             self.attention = nn.Linear(out_channels * sz_after_conv * sz_after_conv, sz_after_conv * sz_after_conv)
 
     def forward(self, z_f, x_f):
-        wz = z_f.size()[-2] * z_f.size()[-1]
-        wx = x_f.size()[-2] * x_f.size()[-1]
-        z_f = z_f/wx
-        x_f = x_f/wz
+        #wz = z_f.size()[-2] * z_f.size()[-1]
+        #wx = x_f.size()[-2] * x_f.size()[-1]
+        #z_f = z_f/wx
+        #x_f = x_f/wz
         rpn_feat = self.rpn_feat(z_f, x_f)
         N,C = rpn_feat.size()[:2]
         if self.use_attention:
@@ -80,7 +80,10 @@ class DepthwiseRPN(RPN):
 
 @HEADS.register_module
 class SiameseRPNHead(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_sizes=[7], target_sizes=[19], feat_strides=[8],
+    def __init__(self, in_channels, out_channels, kernel_sizes=[7], target_sizes=[21], feat_strides=[8],
+                 use_down_c_op=False,
+                 conv_op_per_group=64,
+                 ngroups=5,
                  target_means=[.0, .0, .0, .0],
                  target_stds=[1.0, 1.0, 1.0, 1.0],
                  reg_class_agnostic = True,
@@ -108,6 +111,9 @@ class SiameseRPNHead(nn.Module):
         self.target_sizes = target_sizes
         self.n_lvls = len(feat_strides)
         assert len(kernel_sizes)==1 and len(target_sizes)==1, (len(kernel_sizes), len(target_sizes))
+        self.use_down_c_op = use_down_c_op
+        if self.use_down_c_op:
+            self.down_c_conv = nn.Conv2d(in_channels, ngroups*conv_op_per_group, kernel_size=1, bias=False, groups=ngroups)
 
     def _get_kernel_crop_modules(self, in_channels, kernel_size, spatial_scale):
         if self.psroi_align_kernel:
@@ -133,6 +139,9 @@ class SiameseRPNHead(nn.Module):
                                         kernel_crop_module, target_crop_module):
         assert feat2.shape[-1]>target_size and feat2.shape[-2]>target_size, \
             'feature size:{} should be larger than target size:{}.'.format(feat2.shape[-2:], target_size)
+        if self.use_down_c_op:
+            feat1 = self.down_c_conv(feat1)
+            feat2 = self.down_c_conv(feat2)
         _, _, h, w = feat1.shape
         rpn_rois_center_x = (rpn_rois[:, 1] + rpn_rois[:, 3]) / 2.0
         rpn_rois_center_y = (rpn_rois[:, 2] + rpn_rois[:, 4]) / 2.0
@@ -162,6 +171,7 @@ class SiameseRPNHead(nn.Module):
 
         kernels = kernel_crop_module(feat1, roi_kernels)
         targets = target_crop_module(feat2, roi_targets)
+
         target_ranges = roi_targets
         target_metas = [img_meta[int(roi[0].item())] for roi in rpn_rois]
 
