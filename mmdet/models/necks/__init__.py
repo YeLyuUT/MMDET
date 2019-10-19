@@ -1,5 +1,5 @@
 from .fpn import FPN
-from .bfp import BFP
+from .bfp import BFP,FRCNBFP
 from .hrfpn import HRFPN
 
-__all__ = ['FPN', 'BFP', 'HRFPN']
+__all__ = ['FPN', 'BFP', 'HRFPN', 'FRCNBFP']
