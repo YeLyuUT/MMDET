@@ -128,7 +128,8 @@ class FRCNBFP(nn.Module):
                  output_single_lvl=False,
                  conv_cfg=None,
                  norm_cfg=None,
-                 out_channels=None):
+                 out_channels=None,
+                 channel_expansion=1):
         super(FRCNBFP, self).__init__()
         assert refine_type in [None, 'conv', 'non_local']
 
@@ -137,12 +138,13 @@ class FRCNBFP(nn.Module):
         self.conv_cfg = conv_cfg
         self.norm_cfg = norm_cfg
         self.output_single_lvl = output_single_lvl
+        self.channel_expansion = channel_expansion
 
         self.refine_level = refine_level
         self.refine_type = refine_type
         self.out_channels = out_channels
         assert 0 <= self.refine_level < self.num_levels
-        self.ConvModuleList = nn.ModuleList([nn.Conv2d(self.in_channels[i], (i+1)*49, 1).cuda() for i in range(len(self.in_channels))])
+        self.ConvModuleList = nn.ModuleList([nn.Conv2d(self.in_channels[i], (i+1)*49*self.channel_expansion, 1).cuda() for i in range(len(self.in_channels))])
         for m in self.ConvModuleList:
             if isinstance(m, nn.Conv2d):
                 xavier_init(m, distribution='uniform')
