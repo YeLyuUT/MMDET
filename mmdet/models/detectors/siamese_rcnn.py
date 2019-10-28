@@ -14,6 +14,16 @@ import random
 import numpy as np
 from copy import deepcopy
 
+import time
+class clock():
+    def tic(self):
+        self._tic = time.time()
+    def toc(self,text=''):
+        self._toc = time.time()
+        print(text,':', self._toc-self._tic)
+        self._tic = time.time()
+Timer = clock()
+
 class _inner_block(nn.Module):
     def __init__(self, inplanes, planes):
         super(_inner_block, self).__init__()
@@ -390,20 +400,80 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
                                              losses)
         return losses
 
+    def track_block_feat_sequential(self, tgt_feature, feats, rpn_rois_1, img_meta, T, tgt_t):
+        xt_list = []
+        for t in range(T):
+            xt = feats[:, t, :, :, :].contiguous()
+            xt_list.append(xt)
+        bbox_feats_list = []
+        # backward track.
+        tmp_track_feat = [tgt_feature]
+        tmp_track_rois = rpn_rois_1
+        for t in range(tgt_t):
+            feat2 = [xt_list[tgt_t - 1 - t]]
+            _proposal_list = self.siamese_rpn(tmp_track_feat, feat2, tmp_track_rois, img_meta)
+            # TODO check here.
+            rpn_rois_2 = bbox2roi([prop[:, :4] for prop in _proposal_list])
+            bbox_feats = self.bbox_roi_extractor(feat2, rpn_rois_2)
+            bbox_feats_list = [bbox_feats] + bbox_feats_list
+            tmp_track_feat = feat2
+            assert rpn_rois_2.shape == tmp_track_rois.shape, (rpn_rois_2.shape, tmp_track_rois.shape)
+            tmp_track_rois = rpn_rois_2
+        # add middle features.
+        bbox_feats_list.append(self.bbox_roi_extractor([tgt_feature], rpn_rois_1))
+        # forward track.
+        tmp_track_feat = [tgt_feature]
+        tmp_track_rois = rpn_rois_1
+        for t in range(tgt_t + 1, T):
+            feat2 = [xt_list[t]]
+            _proposal_list = self.siamese_rpn(tmp_track_feat, feat2, tmp_track_rois, img_meta)
+            # TODO check here.
+            rpn_rois_2 = bbox2roi([prop[:, :4] for prop in _proposal_list])
+            bbox_feats = self.bbox_roi_extractor(feat2, rpn_rois_2)
+            bbox_feats_list = bbox_feats_list + [bbox_feats]
+            tmp_track_feat = feat2
+            assert rpn_rois_2.shape == tmp_track_rois.shape
+            tmp_track_rois = rpn_rois_2
+
+        block_feats = torch.cat(bbox_feats_list, dim=1)
+        return block_feats
+
+    '''
+    def track_block_feat_instant(self, tgt_feature, feats, rpn_rois_1, img_meta, T, tgt_t):
+        # backward track.
+        #feat2_list, tgt_feature_list = zip(*[(feats[:,t,:,:,:], tgt_feature) for t in range(T) if t!=tgt_t])
+        #feat2s = torch.cat(feat2_list, dim=0)
+        #tgt_feats = torch.cat(tgt_feature_list, axis=0)
+        feat2s = torch.cat([feats[:,:tgt_t,:,:,:], feats[:,tgt_t+1:,:,:,:]], dim=1)
+        tgt_feats = torch.stack([tgt_feature]*(T-1), dim=1)
+        for i in range(T-1):
+            rpn_rois_1_tmp = rpn_rois_1.clone()
+            rpn_rois_1_tmp[:,0]=rpn_rois_1_tmp[:,0]+i*tgt_feature.shape[0]???N,T, rois
+        assert feat2s.shape==tgt_feats.shape, (feat2s.shape, tgt_feats.shape)
+        feat2s = feat2s.view(-1,feat2s.shape[-3],feat2s.shape[-2],feat2s.shape[-1])
+        tgt_feats = tgt_feats.view(-1, tgt_feats.shape[-3],tgt_feats.shape[-2],tgt_feats.shape[-1])
+        _proposal_list = self.siamese_rpn([tgt_feats], [feat2s], , img_meta)
+        # TODO check here.
+        rpn_rois_2 = bbox2roi([prop[:, :4] for prop in _proposal_list])
+        bbox_feats = self.bbox_roi_extractor(feat2s, rpn_rois_2)
+        bbox_feats = bbox_feats.view(tgt_feature.shape[0], -1, bbox_feats.shape[-2], bbox_feats.shape[-1])
+        tgt_bbox_feat = self.bbox_roi_extractor([tgt_feature], rpn_rois_1)
+        bbox_feats_list = [tgt_bbox_feat, bbox_feats]
+        block_feats = torch.cat(bbox_feats_list, dim=1)
+        return block_feats
+    '''
+
     def forward_train_vid(self, imgs, img_meta, gt_bboxes, gt_labels, gt_bboxes_ignore=None, gt_masks=None, proposals=None):
         #imgs: N,T,C,H,W.
         N = imgs.shape[0]
-        H = imgs.shape[2]
-        W = imgs.shape[3]
-        imgs = imgs.view(N,self.T,3,H,W)
+        H = imgs.shape[3]
+        W = imgs.shape[4]
         T = self.T
+        imgs = imgs.view(N*T,3,H,W)
+        feats = self.extract_feat(imgs)[0]
+        feats = feats.view(N,T,-1,feats.shape[-2],feats.shape[-1])
         tgt_t = int((T-1)/2)
-        xt_list = []
-        for t in range(T):
-            xt = self.extract_feat(imgs[:,t,:,:,:])[0].contiguous()
-            xt_list.append(xt)
-            if t==tgt_t:
-                tgt_feature = xt
+        tgt_feature = feats[:, tgt_t, :, :, :].contiguous()
 
         losses = dict()
         # RPN forward and loss
@@ -436,18 +506,9 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
         if self.with_bbox:
             rpn_rois_1 = bbox2roi([res.bboxes for res in sampling_results])
 
-        bbox_feats_list = []
-        for t in range(T):
-            feat2 = [xt_list[t]]
-            if t!=tgt_t:
-                proposal_list = self.siamese_rpn([tgt_feature], feat2, rpn_rois_1, img_meta)
-                # TODO check here.
-                rpn_rois_2 = bbox2roi([prop[:, :4] for prop in proposal_list])
-            else:
-                rpn_rois_2 = rpn_rois_1
-            bbox_feats = self.bbox_roi_extractor(feat2, rpn_rois_2)
-            bbox_feats_list.append(F.relu(bbox_feats))
-        block_feats = torch.cat(bbox_feats_list, dim=1)
+        ########
+        block_feats = self.track_block_feat_sequential(tgt_feature, feats, rpn_rois_1, img_meta, T, tgt_t)
+        #block_feats = self.track_block_feat_instant(tgt_feature, feats, rpn_rois_1, img_meta, T, tgt_t)
 
         if self.with_shared_head:
             block_feats = self.shared_head(block_feats)
@@ -728,25 +789,28 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
     def simple_test(self, img, img_meta, proposals=None, rescale=False, out = False):
         if self.img_train is True:
             return self.simple_test_img(img, img_meta, proposals, rescale)
+        elif self.vid_train is True:
+            return self.simple_test_vid(img, img_meta, None, rescale)
         else:
-            return self.simple_test_vid(img, img_meta, proposals, rescale, out)
+            return self.simple_test_vid_track(img, img_meta, proposals, rescale, out)
 
     def simple_test_img(self, img, img_meta, proposals=None, rescale=False):
         """Test without augmentation."""
         assert self.with_bbox, "Bbox head must be implemented."
-
+        #Timer = clock()
+        #Timer.tic()
         x = self.extract_feat(img)
-
+        #Timer.toc('extract_feat')
         proposal_list = self.simple_test_rpn(
             x, img_meta, self.test_cfg.rpn) if proposals is None else proposals
-
+        #Timer.toc('rpn')
         det_bboxes, det_labels = self.simple_test_bboxes(x, img_meta, proposal_list, None, rescale=False)
         proposal_list = [torch.cat([det_bboxes, det_labels], dim=-1)]
 
-        det_bboxes, det_labels = self.simple_test_bboxes(
-            x, img_meta, proposal_list, self.test_cfg.rcnn, rescale=rescale)
-        bbox_results = bbox2result(det_bboxes, det_labels,
-                                   self.bbox_head.num_classes)
+        det_bboxes, det_labels = self.simple_test_bboxes(x, img_meta, proposal_list, self.test_cfg.rcnn, rescale=rescale)
+        #Timer.toc('rcnn')
+        bbox_results = bbox2result(det_bboxes, det_labels,self.bbox_head.num_classes)
+        #Timer.toc('box2result')
 
         if not self.with_mask:
             return bbox_results
@@ -755,13 +819,137 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
                 x, img_meta, det_bboxes, det_labels, rescale=rescale)
             return bbox_results, segm_results
 
-    def simple_test_vid(self, img, img_meta, proposals=None, rescale=False, out = False):
+    def simple_test_vid(self, imgs, img_meta, proposals=None, rescale=False):
+        """Test without augmentation."""
+        assert self.with_bbox, "Bbox head must be implemented."
+        # imgs: N,T,C,H,W.
+        N = imgs.shape[0]
+        H = imgs.shape[3]
+        W = imgs.shape[4]
+        T = self.T
+        imgs = imgs.view(N * T, 3, H, W)
+        feats = self.extract_feat(imgs)[0]
+        feats = feats.view(N, T, -1, feats.shape[-2], feats.shape[-1])
+        tgt_t = int((T - 1) / 2)
+        tgt_feature = feats[:, tgt_t, :, :, :].contiguous()
+
+        proposal_list = self.simple_test_rpn(
+            [tgt_feature], img_meta, self.test_cfg.rpn) if proposals is None else proposals
+        rpn_rois_1 = bbox2roi([prop[:, :4] for prop in proposal_list])
+
+        ########
+        block_feats = self.track_block_feat_sequential(tgt_feature, feats, rpn_rois_1, img_meta, T, tgt_t)
+        #block_feats = self.track_block_feat_instant(tgt_feature, feats, rpn_rois_1, img_meta, T, tgt_t)
+
+        img_shape = img_meta[0]['img_shape']
+        scale_factor = img_meta[0]['scale_factor']
+        cls_score, bbox_pred = self.bbox_head(block_feats)
+
+        det_bboxes, det_labels = self.bbox_head.get_det_bboxes(
+            rpn_rois_1,
+            cls_score,
+            bbox_pred,
+            img_shape,
+            scale_factor,
+            rescale=rescale,
+            cfg=self.test_cfg.rcnn)
+        bbox_results = bbox2result(det_bboxes, det_labels,
+                                   self.bbox_head.num_classes)
+
+        if not self.with_mask:
+            return bbox_results
+        else:
+            segm_results = self.simple_test_mask(
+                block_feats, img_meta, det_bboxes, det_labels, rescale=rescale)
+            return bbox_results, segm_results
+
+    # new one
+    def simple_test_vid_track_(self, img, img_meta, proposals=None, rescale=False, out = False):
         """Test without augmentation."""
         assert self.with_bbox, "Bbox head must be implemented."
         det_bbox_result = None
         trk_bbox_result = None
         bbox_results = None
         det_bboxes, det_labels = None, None
+        x = self.extract_feat(img)
+        proposal_list = self.simple_test_rpn(x, img_meta, self.test_cfg.rpn) if proposals is None else proposals
+
+        proposal_list_siamese = None
+        rois_tracked_mapped = None
+        if len(x)>1:
+            merged_x = self.merge_features(x)
+        else:
+            merged_x = x
+        if self.sequence_buffer is not None and len(self.sequence_buffer) > 0 and self.sequence_buffer[-1][-1] is not None:
+            proposal_list_siamese, proposal_list_siamese_non_nms = self.multi_track_with_non_nms_proposals(merged_x, img_meta, self.test_cfg.siameserpn, max_gap=self.multi_track_max_gap)
+            rois_tracked_mapped = proposal_list_siamese_non_nms[-1][:,:4].clone()
+        # save mapped boxes
+        if rois_tracked_mapped is not None:
+            mapped_bboxes = rois_tracked_mapped.repeat(1, self.bbox_head.num_classes)
+            if rescale:
+                mapped_bboxes /= img_meta[0]['scale_factor']
+            mapped_bboxes, self.last_det_labels = multiclass(mapped_bboxes, self.last_det_labels)
+            mapped_bbox_results = bbox2result(mapped_bboxes, self.last_det_labels, self.bbox_head.num_classes)
+        else:
+            mapped_bboxes = proposal_list[0].new_zeros((0, 5))
+            mapped_labels = proposal_list[0].new_zeros((0,), dtype=torch.long)
+            mapped_bbox_results = bbox2result(mapped_bboxes, mapped_labels, self.bbox_head.num_classes)
+        self.add_mapped_bboxes_result(mapped_bbox_results)
+        # merge proposals
+        if proposal_list_siamese is not None and len(proposal_list_siamese) > 0 and len(proposal_list_siamese[0]) > 0:
+            if not out:
+                trk_bbox_result = self.proposals_to_box_result(proposal_list_siamese, self.test_cfg.rcnn)
+            proposal_list_siamese[0][:, -1]=1
+            proposal_list[0] = torch.cat([proposal_list[0], proposal_list_siamese[0]], dim=0)
+            # ####
+            # nms rpns for both det and track #
+            # proposal_list[0], _ = nms(proposal_list[0], self.test_cfg.merged_rpn.nms_thr)
+            # nms rpns for both det only #
+            _, inds = nms(proposal_list[0], self.test_cfg.merged_rpn.nms_thr)
+            # ####
+            #inds = inds[inds<len(proposal_list[0])]
+            proposal_list[0] = torch.cat([proposal_list[0][inds,:], proposal_list_siamese[0]], dim=0)
+            # ####
+        # get all results.
+        if len(proposal_list[0])>0:
+            rois = bbox2roi(proposal_list)
+            cls_score, bbox_pred = self.simple_test_rois_scores(merged_x, rois)
+            det_bboxes, det_labels = self.bbox_head.get_det_bboxes(rois,
+                                                                   cls_score,
+                                                                   bbox_pred,
+                                                                   img_meta[0]['img_shape'],
+                                                                   img_meta[0]['scale_factor'],
+                                                                   rescale=rescale,
+                                                                   cfg=None)
+            self.last_det_labels = det_labels
+            det_bboxes, det_labels = multiclass_nms(det_bboxes, det_labels,
+                                                    self.test_cfg.rcnn.score_thr,
+                                                    self.test_cfg.rcnn.nms,
+                                                    self.test_cfg.rcnn.max_per_img)
+            self.update_sequence_list((merged_x, None, None, rois))
+        else:
+            det_bboxes = det_bboxes.new_empty(0, 5)
+            det_labels = det_labels.new_empty(0, 1)
+            self.last_det_labels = None
+            self.update_sequence_list((merged_x, None, None, None))
+
+        bbox_results = bbox2result(det_bboxes, det_labels, self.bbox_head.num_classes)
+
+        if not out:
+            return det_bbox_result, trk_bbox_result, bbox_results
+        else:
+            return bbox_results
+
+    # original
+    def simple_test_vid_track(self, img, img_meta, proposals=None, rescale=False, out = False):
+        """Test without augmentation."""
+        assert self.with_bbox, "Bbox head must be implemented."
+        det_bbox_result = None
+        trk_bbox_result = None
+        bbox_results = None
+        det_bboxes, det_labels = None, None
+        #Timer = clock()
+        #Timer.tic()
         x = self.extract_feat(img)
         proposal_list_raw = self.simple_test_rpn(x, img_meta, self.test_cfg.rpn) if proposals is None else proposals
         det_bboxes, det_labels = self.simple_test_bboxes(x, img_meta, proposal_list_raw, None, rescale=False)
@@ -780,6 +968,7 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
             det_bboxes = torch.stack(max_bboxes, dim=0)
             det_labels = torch.stack(max_labels, dim=0)
             proposal_list = [torch.cat([det_bboxes, det_labels], dim=-1)]
+            proposal_list[0], _ = nms(proposal_list[0], self.test_cfg.rcnn_propose.nms.iou_thr)
         else:
             proposal_list = [det_bboxes.new_empty(0, 5)]
         if not out:
@@ -811,6 +1000,7 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
             if not out:
                 trk_bbox_result = self.proposals_to_box_result(proposal_list_siamese, self.test_cfg.rcnn)
             proposal_list_siamese[0][:, -1]=1
+            len_proposal_det = len(proposal_list[0])
             proposal_list[0] = torch.cat([proposal_list[0], proposal_list_siamese[0]], dim=0)
             # ####
             # nms rpns for both det and track #
@@ -818,7 +1008,7 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
             # nms rpns for both det only #
             _, inds = nms(proposal_list[0], self.test_cfg.merged_rpn.nms_thr)
             # ####
-            inds = inds[inds<len(proposal_list[0])]
+            inds = inds[inds<len_proposal_det]
             proposal_list[0] = torch.cat([proposal_list[0][inds,:], proposal_list_siamese[0]], dim=0)
             # ####
         # get all results.
@@ -837,11 +1027,11 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
             det_bboxes, det_labels = multiclass(det_bboxes, det_labels)
             self.update_sequence_list((merged_x, None, None, rois))
         else:
-            det_bboxes = det_bboxes.new_empty(0,5)
-            det_labels = det_labels.new_empty(0,1)
+            det_bboxes = det_bboxes.new_empty(0, 5)
+            det_labels = det_labels.new_empty(0, 1)
             self.last_det_labels = None
             self.update_sequence_list((merged_x, None, None, None))
-
+        #Timer.toc()
         bbox_results = bbox2result(det_bboxes, det_labels, self.bbox_head.num_classes)
 
         if not out:
