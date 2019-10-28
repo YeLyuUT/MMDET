@@ -11,7 +11,7 @@ from .registry import DATASETS
 from .transforms import (BboxTransform, ImageTransform, MaskTransform,
                          Numpy2Tensor, SegMapTransform)
 from .utils import random_scale, to_tensor
-
+import torch
 
 @DATASETS.register_module
 class CustomBlockDataset(Dataset):
@@ -186,19 +186,35 @@ class CustomBlockDataset(Dataset):
         img_name = osp.join(self.img_prefix, img_info['filename'])
         dname = osp.dirname(img_name)
         fname, ext = osp.splitext(osp.basename(img_name))
-        fidx = int(fname)
+        if fname.isdigit():
+            fidx = int(fname)
+        else:
+            fidx = None
         hf_size = int((self.block_size-1)/2)
         img_name_list = []
         for i in range(-hf_size, hf_size+1):
+            if i==0:
+                img_name_list.append(osp.join(dname, fname + ext))
+                continue
             shift = i*self.block_gap
-            fidx_other = fidx+shift
-            fname_other = osp.join(dname,'%06d'%(fidx_other)+ext)
-            if not osp.exists(fname_other):
-                warnings.warn('Skip the image "%s" that has no valid neighbor frames.' %
-                              osp.join(self.img_prefix, img_info['filename']))
-                return None
+            if fidx is not None:
+                fidx_other = fidx+shift
+                fname_other = osp.join(dname, '%06d' % (fidx_other) + ext)
+                if not osp.exists(fname_other):
+                    img_name_list.append(None)
+                else:
+                    img_name_list.append(fname_other)
             else:
-                img_name_list.append(fname_other)
+                img_name_list.append(None)
+
+        if None in img_name_list:
+            assert img_name_list[hf_size] is not None, img_name_list
+            for i in range(hf_size):
+                if img_name_list[hf_size-1-i] is None:
+                    img_name_list[hf_size - 1 - i] = img_name_list[hf_size - i]
+            for i in range(hf_size):
+                if img_name_list[hf_size+1+i] is None:
+                    img_name_list[hf_size+1+i] = img_name_list[hf_size + i]
 
         img_list = []
         for img_name in img_name_list:
@@ -250,7 +266,7 @@ class CustomBlockDataset(Dataset):
                 im, img_scale, flip, keep_ratio=self.resize_keep_ratio)
             im = im.copy()
             img_list[idx] = im
-        img = np.concatenate(img_list,axis=0)
+        img = np.stack(img_list,axis=0)
 
         if self.with_seg:
             gt_seg = mmcv.imread(
@@ -302,7 +318,36 @@ class CustomBlockDataset(Dataset):
     def prepare_test_img(self, idx):
         """Prepare an image for testing (multi-scale and flipping)"""
         img_info = self.img_infos[idx]
-        img = mmcv.imread(osp.join(self.img_prefix, img_info['filename']))
+
+        # load image
+        img_name = osp.join(self.img_prefix, img_info['filename'])
+        dname = osp.dirname(img_name)
+        fname, ext = osp.splitext(osp.basename(img_name))
+        fidx = int(fname)
+        hf_size = int((self.block_size - 1) / 2)
+        img_name_list = []
+        for i in range(-hf_size, hf_size + 1):
+            shift = i * self.block_gap
+            fidx_other = fidx + shift
+            fname_other = osp.join(dname, '%06d' % (fidx_other) + ext)
+            if not osp.exists(fname_other):
+                img_name_list.append(None)
+            else:
+                img_name_list.append(fname_other)
+        if None in img_name_list:
+            assert img_name_list[hf_size] is not None
+            for i in range(hf_size):
+                if img_name_list[hf_size - 1 - i] is None:
+                    img_name_list[hf_size - 1 - i] = img_name_list[hf_size - i]
+            for i in range(hf_size):
+                if img_name_list[hf_size + 1 + i] is None:
+                    img_name_list[hf_size + 1 + i] = img_name_list[hf_size + i]
+
+        img_list = []
+        for img_name in img_name_list:
+            img = mmcv.imread(img_name)
+            img_list.append(img)
+
         if self.proposals is not None:
             proposal = self.proposals[idx][:self.num_max_proposals]
             if not (proposal.shape[1] == 4 or proposal.shape[1] == 5):
@@ -330,29 +375,26 @@ class CustomBlockDataset(Dataset):
                     score = None
                 _proposal = self.bbox_transform(proposal, img_shape,
                                                 scale_factor, flip)
-                _proposal = np.hstack([_proposal, score
-                                       ]) if score is not None else _proposal
+                _proposal = np.hstack([_proposal, score]) if score is not None else _proposal
                 _proposal = to_tensor(_proposal)
             else:
                 _proposal = None
             return _img, _img_meta, _proposal
 
-        imgs = []
         img_metas = []
         proposals = []
-        for scale in self.img_scales:
-            _img, _img_meta, _proposal = prepare_single(
-                img, scale, False, proposal)
-            imgs.append(_img)
-            img_metas.append(DC(_img_meta, cpu_only=True))
-            proposals.append(_proposal)
-            if self.flip_ratio > 0:
-                _img, _img_meta, _proposal = prepare_single(
-                    img, scale, True, proposal)
-                imgs.append(_img)
-                img_metas.append(DC(_img_meta, cpu_only=True))
-                proposals.append(_proposal)
-        data = dict(img=imgs, img_meta=img_metas)
+        assert len(self.img_scales)==1,'Only 1 scale testing supported.'
+        scale = self.img_scales[0]
+
+        for idx, img in enumerate(img_list):
+            _img, _img_meta, _proposal = prepare_single(img, scale, False, proposal)
+            img_list[idx] = _img
+
+        img_metas.append(DC(_img_meta, cpu_only=True))
+        proposals.append(_proposal)
+        imgs = [torch.stack(img_list, dim=0)]
+        data = dict(img=imgs,
+                    img_meta=img_metas)
         if self.proposals is not None:
             data['proposals'] = proposals
         return data
