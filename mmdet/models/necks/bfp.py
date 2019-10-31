@@ -129,10 +129,13 @@ class FRCNBFP(nn.Module):
                  conv_cfg=None,
                  norm_cfg=None,
                  out_channels=None,
+                 c_mid=64,
+                 k=15,
                  channel_expansion=1):
         super(FRCNBFP, self).__init__()
         assert refine_type in [None, 'conv', 'non_local']
-
+        self.c_mid=c_mid
+        self.k=k
         self.in_channels = in_channels
         self.num_levels = num_levels
         self.conv_cfg = conv_cfg
@@ -144,10 +147,20 @@ class FRCNBFP(nn.Module):
         self.refine_type = refine_type
         self.out_channels = out_channels
         assert 0 <= self.refine_level < self.num_levels
-        self.ConvModuleList = nn.ModuleList([nn.Conv2d(self.in_channels[i], (i+1)*49*self.channel_expansion, 1).cuda() for i in range(len(self.in_channels))])
-        for m in self.ConvModuleList:
-            if isinstance(m, nn.Conv2d):
-                xavier_init(m, distribution='uniform')
+        self.ContextModuleList = nn.ModuleList(
+            [nn.Sequential(nn.Conv2d(self.in_channels[i], self.c_mid, kernel_size=(self.k, 1), padding=(int((self.k-1)/2),0)).cuda(),
+                           nn.Conv2d(self.c_mid, (i+1)*49*self.channel_expansion, kernel_size=(1, self.k), padding=(0, int((self.k - 1) / 2))).cuda(),
+                           )
+             for i in range(len(self.in_channels))])
+        #self.ConvModuleList = nn.ModuleList([nn.Conv2d(self.c_mid, (i+1)*49*self.channel_expansion, 1).cuda() for i in range(len(self.in_channels))])
+        #for m in self.ConvModuleList:
+        #    if isinstance(m, nn.Conv2d):
+        #        xavier_init(m, distribution='uniform')
+
+        for M in self.ContextModuleList:
+            for m in M.children():
+               if isinstance(m, nn.Conv2d):
+                   xavier_init(m, distribution='uniform')
 
     def init_weights(self):
         for m in self.modules():
@@ -170,6 +183,7 @@ class FRCNBFP(nn.Module):
             feats.append(gathered)
 
         for i in range(len(feats)):
-            feats[i] = self.ConvModuleList[i](feats[i])
+            feats[i] = self.ContextModuleList[i](feats[i])
+            #feats[i] = self.ConvModuleList[i](feats[i])
         feats = torch.cat(feats, dim=1)
         return [feats]
