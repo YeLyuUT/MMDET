@@ -37,7 +37,7 @@ model = dict(
         loss_bbox=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=1.0)),
     siameserpn_head=dict(
         type='SiameseRPNHead',
-        in_channels=256*5,
+        in_channels=256*3,
         out_channels=256,
         feat_strides=[16],
         target_means=[.0, .0, .0, .0],
@@ -96,7 +96,7 @@ train_cfg = dict(
             ignore_iof_thr=-1),
         sampler=dict(
             type='OHEMSampler',
-            num=512,
+            num=128,
             pos_fraction=0.25,
             neg_pos_ub=-1,
             add_gt_as_proposals=True),
@@ -111,7 +111,7 @@ train_cfg = dict(
             ignore_iof_thr=-1),
         sampler_track=dict(
             type='RandomSampler',
-            num=128,
+            num=64,
             pos_fraction=1.0,
             neg_pos_ub=-1,
             add_gt_as_proposals=True),
@@ -144,7 +144,7 @@ test_cfg = dict(
         score_threshold=0.7,
     ),
     rcnn=dict(
-        score_thr=0.05, nms=dict(type='nms', iou_thr=0.5), max_per_img=100)
+        score_thr=0.01, nms=dict(type='nms', iou_thr=0.45), max_per_img=100)
     # soft-nms is also supported for rcnn testing
     # e.g., nms=dict(type='soft_nms', iou_thr=0.5, min_score=0.05)
 )
@@ -161,7 +161,7 @@ data = dict(
         ann_file=data_root + '/ImageSets/trainr_DETVID.json',
         img_prefix=data_root,
         multiscale_mode='range',
-        img_scale=[(1800, 600), (1800, 400)],
+        img_scale=[(1800, 600)],
         img_norm_cfg=img_norm_cfg,
         size_divisor=32,
         flip_ratio=0.5,
@@ -172,7 +172,7 @@ data = dict(
         type=dataset_type,
         ann_file=data_root + '/ImageSets/VID_val.json',
         img_prefix=data_root + '/Data/VID/val',
-        img_scale=[(1800, 500)],#[(1100,720),(1000, 640),(900,560)],
+        img_scale=[(1800, 600)],#[(1100,720),(1000, 640),(900,560)],
         img_norm_cfg=img_norm_cfg,
         size_divisor=32,
         flip_ratio=0,
@@ -180,7 +180,7 @@ data = dict(
         with_label=False,
         test_mode=True))
 # optimizer
-optimizer = dict(type='SGD', lr=0.002, momentum=0.9, weight_decay=0.0001)
+optimizer = dict(type='SGD', lr=0.001, momentum=0.9, weight_decay=0.0001)
 optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
 # learning policy
 lr_config = dict(
@@ -188,8 +188,8 @@ lr_config = dict(
     warmup='linear',
     warmup_iters=50,
     warmup_ratio=1.0 / 3,
-    step=[20, 28])
-checkpoint_config = dict(interval=4)
+    step=[8, 12])
+checkpoint_config = dict(interval=2)
 # yapf:disable
 log_config = dict(
     interval=50,
@@ -199,7 +199,7 @@ log_config = dict(
     ])
 # yapf:enable
 # runtime settings
-total_epochs = 30
+total_epochs = 14
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
 work_dir = './work_dirs/siamese_faster_rcnn_OHEM_DETVID'

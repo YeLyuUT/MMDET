@@ -1,6 +1,7 @@
 # model settings
 model = dict(
     type='SiameseRCNN',
+    img_train=True,
     pretrained='open-mmlab://resnext101_32x4d',
     backbone=dict(
         type='ResNeXt',
@@ -12,11 +13,11 @@ model = dict(
         frozen_stages=1,
         style='pytorch',
         dcn=dict(
-            modulated=False,
+            modulated=True,
             groups=32,
             deformable_groups=1,
             fallback_on_stride=False),
-        stage_with_dcn=(False, False, False, False)),
+        stage_with_dcn=(False, True, True, True)),
     neck=dict(
         type='FPN',
         in_channels=[256, 512, 1024, 2048],
@@ -36,7 +37,7 @@ model = dict(
         loss_bbox=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=1.0)),
     siameserpn_head=dict(
         type='SiameseRPNHead',
-        in_channels=32*5,
+        in_channels=256*3,
         out_channels=256,
         feat_strides=[16],
         target_means=[.0, .0, .0, .0],
@@ -95,7 +96,7 @@ train_cfg = dict(
             ignore_iof_thr=-1),
         sampler=dict(
             type='OHEMSampler',
-            num=512,
+            num=128,
             pos_fraction=0.25,
             neg_pos_ub=-1,
             add_gt_as_proposals=True),
@@ -110,7 +111,7 @@ train_cfg = dict(
             ignore_iof_thr=-1),
         sampler_track=dict(
             type='RandomSampler',
-            num=128,
+            num=64,
             pos_fraction=1.0,
             neg_pos_ub=-1,
             add_gt_as_proposals=True),
@@ -143,22 +144,13 @@ test_cfg = dict(
         score_threshold=0.7,
     ),
     rcnn=dict(
-        score_thr=0.05, nms=dict(type='nms', iou_thr=0.5), max_per_img=100),
-    merged_rpn=dict(
-        nms_across_levels=False,
-        nms_pre=1000,
-        nms_post=1000,
-        max_num=1000,
-        nms_thr=0.3,
-        min_bbox_size=0),
-    rcnn_propose=dict(
-        score_thr=0.05, nms=dict(type='nms', iou_thr=0.3), max_per_img=100),
+        score_thr=0.01, nms=dict(type='nms', iou_thr=0.45), max_per_img=100)
     # soft-nms is also supported for rcnn testing
     # e.g., nms=dict(type='soft_nms', iou_thr=0.5, min_score=0.05)
 )
 # dataset settings
-dataset_type = 'ImageNetVIDPairDataset'
-data_root = 'data/imagenet/Data/VID/'
+dataset_type = 'ImageNetDETVIDDataset'
+data_root = 'data/imagenet'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 data = dict(
@@ -166,29 +158,26 @@ data = dict(
     workers_per_gpu=4,
     train=dict(
         type=dataset_type,
-        ann_file=data_root + '../../ImageSets/VID_train_pair.json',
-        img_prefix=data_root + 'train/',
+        ann_file=data_root + '/ImageSets/trainr_DETVID.json',
+        img_prefix=data_root,
         multiscale_mode='range',
-        img_scale=[(1800, 600), (1800, 400)],
+        img_scale=[(1800, 600)],
         img_norm_cfg=img_norm_cfg,
         size_divisor=32,
         flip_ratio=0.5,
         with_mask=False,
         with_crowd=False,
-        with_label=True,
-        with_trackid=True,
-        reverse_ratio=0.5),
+        with_label=True,),
     test=dict(
         type=dataset_type,
-        ann_file=data_root + '../../ImageSets/VID_val_jsons/%06d.json'%(333),
-        img_prefix=data_root + 'val/',
-        img_scale=[(1800, 500)],#[(1100,720),(1000, 640),(900,560)],
+        ann_file=data_root + '/ImageSets/VID_val.json',
+        img_prefix=data_root + '/Data/VID/val',
+        img_scale=[(1800, 600)],#[(1100,720),(1000, 640),(900,560)],
         img_norm_cfg=img_norm_cfg,
         size_divisor=32,
         flip_ratio=0,
         with_mask=False,
         with_label=False,
-        with_trackid=False,
         test_mode=True))
 # optimizer
 optimizer = dict(type='SGD', lr=0.001, momentum=0.9, weight_decay=0.0001)
@@ -199,8 +188,8 @@ lr_config = dict(
     warmup='linear',
     warmup_iters=50,
     warmup_ratio=1.0 / 3,
-    step=[3,4])
-checkpoint_config = dict(interval=1)
+    step=[8, 12])
+checkpoint_config = dict(interval=2)
 # yapf:disable
 log_config = dict(
     interval=50,
@@ -210,10 +199,10 @@ log_config = dict(
     ])
 # yapf:enable
 # runtime settings
-total_epochs = 5
+total_epochs = 14
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
-work_dir = './work_dirs/siamese_faster_rcnn_OHEM'
+work_dir = './work_dirs/siamese_faster_rcnn_OHEM_DETVID_dcn'
 load_from = None
 resume_from = None
 workflow = [('train', 1)]
