@@ -977,7 +977,7 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
         proposal_list_siamese = None
         rois_tracked_mapped = None
         if len(x)>1:
-            merged_x = self.merge_features(x)
+            merged_x = self.merge_features(x[1:-1])
         else:
             merged_x = x
         if self.sequence_buffer is not None and len(self.sequence_buffer) > 0 and self.sequence_buffer[-1][-1] is not None:
