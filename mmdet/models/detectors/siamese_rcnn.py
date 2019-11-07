@@ -309,8 +309,8 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
                             img_meta,
                             ):
         if len(extracted_features_1)>1:
-            #extracted_features_1 = extracted_features_1[1:-1]
-            #extracted_features_2 = extracted_features_2[1:-1]
+            extracted_features_1 = extracted_features_1[1:-1]
+            extracted_features_2 = extracted_features_2[1:-1]
             extracted_features_1 = self.merge_features(extracted_features_1)
             extracted_features_2 = self.merge_features(extracted_features_2)
 
