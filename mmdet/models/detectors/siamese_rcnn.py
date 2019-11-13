@@ -69,6 +69,7 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
                  vid_train=False,
                  track_train=False,
                  freeze_feature_extractor=False,
+                 freeze_backbone=False,
                  train_rcnn=True,
                  detach_track_feature=False,
                  T=1):
@@ -93,10 +94,13 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
         self.track_train = track_train
         assert not (self.img_train and self.vid_train)
         self.freeze_feature_extractor = freeze_feature_extractor
+        self.freeze_backbone = freeze_backbone
         self.train_rcnn = train_rcnn
         if self.freeze_feature_extractor:
             self.freeze_parts(self.backbone)
             self.freeze_parts(self.neck)
+        if self.freeze_backbone:
+            self.freeze_parts(self.backbone)
         self.T = T
         self.sequence_mapped_bboxes = None
         self.sequence_mapped_bboxes_result = None
