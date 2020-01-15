@@ -13,6 +13,7 @@ from ...datasets.transforms import BboxTransform
 import random
 import numpy as np
 from copy import deepcopy
+from mmdet import ops
 
 import time
 class clock():
@@ -55,7 +56,8 @@ class _inner_block(nn.Module):
 
 @DETECTORS.register_module
 class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
-    def __init__(self, siameserpn_head,
+    def __init__(self,
+                 siameserpn_head,
                  backbone,
                  rpn_head,
                  bbox_roi_extractor,
@@ -68,11 +70,13 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
                  img_train=False,
                  vid_train=False,
                  track_train=False,
+                 graphnn_train=False,
                  freeze_feature_extractor=False,
                  freeze_backbone=False,
                  train_rcnn=True,
                  detach_track_feature=False,
-                 T=1):
+                 T=1,
+                 space_time_augmentation=None):
         super(SiameseRCNN, self).__init__(
             backbone=backbone,
             neck=neck,
@@ -92,6 +96,7 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
         self.img_train = img_train
         self.vid_train = vid_train
         self.track_train = track_train
+        self.graphnn_train = graphnn_train
         assert not (self.img_train and self.vid_train)
         self.freeze_feature_extractor = freeze_feature_extractor
         self.freeze_backbone = freeze_backbone
@@ -112,6 +117,16 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
         self._proposal_repo = None
         self.detach_track_feature = detach_track_feature
         #self.nms = trNMS(cfg.SIAMESE.PANELTY_K, cfg.SIAMESE.HANNING_WINDOW_WEIGHT, cfg.SIAMESE.HANNING_WINDOW_SIZE_FACTOR)
+        self.space_time_augmentation = train_cfg.space_time_augmentation if self.training else test_cfg.space_time_augmentation
+        if self.space_time_augmentation is not None:
+            nlvls = self.space_time_augmentation.levels
+            C_in = self.space_time_augmentation.C_in
+            C_qk = self.space_time_augmentation.C_qk
+            relation_percent = self.space_time_augmentation.relation_percent
+            print('relation_percent set to:', relation_percent)
+            self.space_time_modules = [ops.PointwiseGraphNN(C_in, C_qk=C_qk, relation_percent=relation_percent).cuda() for _ in range(nlvls)]
+        else:
+            self.space_time_modules = None
 
     @auto_fp16(apply_to=('img',))
     def forward(self, return_loss = True, **inputs):
@@ -122,6 +137,8 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
                 return self.forward_train_vid(**inputs)
             elif self.track_train:
                 return self.forward_train_track_only(**inputs)
+            elif self.graphnn_train:
+                return self.forward_train_graphNN(**inputs)
             else:
                 return self.forward_train(**inputs)
         else:
@@ -572,6 +589,94 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
             gt_trackids2,
             img_meta, )
         losses.update(siameserpn_losses)
+        return losses
+
+    def forward_train_graphNN(self,
+                              img1,
+                              img2,
+                              img_meta,
+                              gt_bboxes1,
+                              gt_bboxes2,
+                              gt_labels1,
+                              gt_labels2,
+                              gt_trackids1,
+                              gt_trackids2,
+                              gt_bboxes_ignore1=None,
+                              gt_bboxes_ignore2=None,
+                              gt_masks1=None,
+                              gt_masks2=None,
+                              proposals=None):
+        ##################################
+        #      Detection RPN part        #
+        ##################################
+        # same as two stage detector
+        img = torch.cat([img1, img2], dim=0)
+        n_batches = img1.shape[0]
+        x = self.extract_feat(img)
+
+        # For each level, we get the features for the two branches.
+        extracted_features = x
+        # extracted_features[0].detach_()
+        split_extracted_features = [torch.split(x, n_batches, dim=0) for x in extracted_features]
+        extracted_features_1 = [x[0] for x in split_extracted_features]
+        extracted_features_2 = [x[1] for x in split_extracted_features]
+
+        gt_bboxes_ignore = None
+        gt_masks = None
+
+        ##################################
+        #         GraphNN part           #
+        ##################################
+        augmented_feats1 = [None for _ in range(len(extracted_features_1))]
+        for idx, ext_feat1 in enumerate(extracted_features_1):
+            space_time_mem = torch.stack((extracted_features_2[idx], ext_feat1), dim=0)
+            augmented_feats1[idx] = self.space_time_modules[idx](space_time_mem, ext_feat1)
+
+        # Set image train samples.
+        gt_bboxes = gt_bboxes1
+        gt_labels = gt_labels1
+        img_train_meta = img_meta
+        img_train_feat = augmented_feats1
+
+        losses = dict()
+
+        # RPN forward and loss
+        if self.with_rpn:
+            proposal_list, losses = self.forward_rpn(img_train_feat, img_train_meta, gt_bboxes, gt_bboxes_ignore,
+                                                     losses)
+        else:
+            proposal_list = proposals
+
+        # TODO separate tracking and detection training.
+        ##################################
+        #        Tracking part           #
+        ##################################
+        '''
+        siameserpn_losses, proposal_list_track = self.forward_track_train(
+            n_batches,
+            proposal_list,
+            extracted_features_1,
+            extracted_features_2,
+            gt_bboxes1,
+            gt_bboxes2,
+            gt_trackids1,
+            gt_trackids2,
+            img_meta, )
+        losses.update(siameserpn_losses)
+        '''
+        ##################################
+        #           RCNN part            #
+        ##################################
+        if self.train_rcnn:
+            num_imgs = n_batches
+            losses = self.forward_rcnn_train(num_imgs,
+                                             img_train_feat,
+                                             proposal_list,
+                                             gt_bboxes,
+                                             gt_labels,
+                                             gt_bboxes_ignore,
+                                             gt_masks,
+                                             losses)
         return losses
 
     def forward_train(self,
