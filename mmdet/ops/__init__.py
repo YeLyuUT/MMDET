@@ -9,6 +9,7 @@ from .roi_pool import RoIPool, roi_pool
 from .sigmoid_focal_loss import SigmoidFocalLoss, sigmoid_focal_loss
 from .masked_conv import MaskedConv2d
 from .psroi_pool import PSRoIPool, psroi_pool, PSRoIPoolAfterPointwiseConv
+from .space_time_mem import PointwiseGraphNN
 
 __all__ = [
     'nms', 'soft_nms', 'RoIAlign', 'roi_align', 'RoIPool', 'roi_pool',
@@ -17,4 +18,5 @@ __all__ = [
     'ModulatedDeformConvPack', 'deform_conv', 'modulated_deform_conv',
     'deform_roi_pooling', 'SigmoidFocalLoss', 'sigmoid_focal_loss',
     'MaskedConv2d', 'ContextBlock', 'PSRoIPool', 'psroi_pool', 'PSRoIPoolAfterPointwiseConv',
+    'PointwiseGraphNN',
 ]
