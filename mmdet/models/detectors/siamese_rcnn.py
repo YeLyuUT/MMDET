@@ -117,7 +117,7 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
         self._proposal_repo = None
         self.detach_track_feature = detach_track_feature
         #self.nms = trNMS(cfg.SIAMESE.PANELTY_K, cfg.SIAMESE.HANNING_WINDOW_WEIGHT, cfg.SIAMESE.HANNING_WINDOW_SIZE_FACTOR)
-        self.space_time_augmentation = train_cfg.space_time_augmentation if self.training else test_cfg.space_time_augmentation
+        self.space_time_augmentation = space_time_augmentation
         if self.space_time_augmentation is not None:
             nlvls = self.space_time_augmentation.levels
             C_in = self.space_time_augmentation.C_in
@@ -125,6 +125,8 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
             relation_percent = self.space_time_augmentation.relation_percent
             print('relation_percent set to:', relation_percent)
             self.space_time_modules = [ops.PointwiseGraphNN(C_in, C_qk=C_qk, relation_percent=relation_percent).cuda() for _ in range(nlvls)]
+            self.space_time_mem = []
+            self.space_time_mem_counter = 0
         else:
             self.space_time_modules = None
 
@@ -591,6 +593,7 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
         losses.update(siameserpn_losses)
         return losses
 
+
     def forward_train_graphNN(self,
                               img1,
                               img2,
@@ -900,6 +903,8 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
             return self.simple_test_img(img, img_meta, proposals, rescale)
         elif self.vid_train is True:
             return self.simple_test_vid(img, img_meta, None, rescale)
+        elif self.graphnn_train:
+            return self.simple_test_graphnn_img(img, img_meta, proposals, rescale)
         else:
             return self.simple_test_vid_track(img, img_meta, proposals, rescale, out)
 
@@ -1148,6 +1153,161 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
         else:
             return bbox_results
 
+    def retrieve_space_time_mem(self, idx=None):
+        '''
+
+        :param idx: None if all space time memories are used. Or list of indices to select.
+        :return: list of memory for relation distillation.
+        '''
+        if idx is None:
+            mems_list = self.space_time_mem
+        else:
+            mems_list = self.space_time_mem[idx]
+        return mems_list
+
+    def simple_test_graphnn_img(self, img, img_meta, proposals=None, rescale=False):
+        """Test without augmentation."""
+        assert self.with_bbox, "Bbox head must be implemented."
+        #Timer = clock()
+        #Timer.tic()
+        extracted_features_1 = self.extract_feat(img)
+        # Augment
+        augmented_feats1 = [None for _ in range(len(extracted_features_1))]
+        space_time_mem_list = self.retrieve_space_time_mem(idx=None)
+        #print('space_time_mem_list len:', len(space_time_mem_list))
+        for idx, ext_feat1 in enumerate(extracted_features_1):
+            space_time_mem = torch.stack([it[idx] for it in space_time_mem_list]+[ext_feat1], dim=0)
+            augmented_feats1[idx] = self.space_time_modules[idx](space_time_mem, ext_feat1)
+
+        # update memory.
+        if self.space_time_mem_counter%5==0:
+            if len(self.space_time_mem)==20:
+                self.space_time_mem = self.space_time_mem[:-1]
+            self.space_time_mem = self.space_time_mem + [augmented_feats1]
+            self.space_time_mem_counter = 0
+        self.space_time_mem_counter+=1
+        #Timer.toc('extract_feat')
+        x = augmented_feats1
+        proposal_list = self.simple_test_rpn(
+            x, img_meta, self.test_cfg.rpn) if proposals is None else proposals
+        #Timer.toc('rpn')
+        det_bboxes, det_labels = self.simple_test_bboxes(x, img_meta, proposal_list, None, rescale=False)
+        proposal_list = [torch.cat([det_bboxes, det_labels], dim=-1)]
+
+        det_bboxes, det_labels = self.simple_test_bboxes(x, img_meta, proposal_list, self.test_cfg.rcnn, rescale=rescale)
+        #Timer.toc('rcnn')
+        bbox_results = bbox2result(det_bboxes, det_labels,self.bbox_head.num_classes)
+        #Timer.toc('box2result')
+
+        if not self.with_mask:
+            return bbox_results
+        else:
+            segm_results = self.simple_test_mask(
+                x, img_meta, det_bboxes, det_labels, rescale=rescale)
+            return bbox_results, segm_results
+
+    # TODO need to modify.
+    def simple_test_graphnn_track(self, img, img_meta, proposals=None, rescale=False, out = False):
+        """Test without augmentation."""
+        assert self.with_bbox, "Bbox head must be implemented."
+        det_bbox_result = None
+        trk_bbox_result = None
+        bbox_results = None
+        det_bboxes, det_labels = None, None
+        # Timer = clock()
+        # Timer.tic()
+        x = self.extract_feat(img)
+        proposal_list_raw = self.simple_test_rpn(x, img_meta, self.test_cfg.rpn) if proposals is None else proposals
+        det_bboxes, det_labels = self.simple_test_bboxes(x, img_meta, proposal_list_raw, None, rescale=False)
+        # prune proposals.
+        proposal_threshold = self.test_cfg.rcnn_propose.score_thr
+        det_bboxes = det_bboxes[:, 4:].contiguous()
+        det_labels = det_labels[:, 1:].contiguous()
+        max_bboxes = []
+        max_labels = []
+        for _ in range(len(det_bboxes)):
+            v, ind = torch.max(det_labels[_, :], -1)
+            if v > proposal_threshold:
+                max_bboxes.append(det_bboxes[_, ind * 4:(ind + 1) * 4])
+                max_labels.append(det_labels[_, ind:(ind + 1)])
+        if len(max_bboxes) > 0:
+            det_bboxes = torch.stack(max_bboxes, dim=0)
+            det_labels = torch.stack(max_labels, dim=0)
+            proposal_list = [torch.cat([det_bboxes, det_labels], dim=-1)]
+            proposal_list[0], _ = nms(proposal_list[0], self.test_cfg.rcnn_propose.nms.iou_thr)
+        else:
+            proposal_list = [det_bboxes.new_empty(0, 5)]
+        if not out:
+            det_bbox_result = self.proposals_to_box_result(proposal_list, self.test_cfg.rcnn_propose)
+
+        proposal_list_siamese = None
+        rois_tracked_mapped = None
+        if len(x) > 1:
+            merged_x = self.merge_features(x[1:-1])
+        else:
+            merged_x = x
+        if self.sequence_buffer is not None and len(self.sequence_buffer) > 0 and self.sequence_buffer[-1][
+            -1] is not None:
+            proposal_list_siamese, proposal_list_siamese_non_nms = self.multi_track_with_non_nms_proposals(merged_x,
+                                                                                                           img_meta,
+                                                                                                           self.test_cfg.siameserpn,
+                                                                                                           max_gap=self.multi_track_max_gap)
+            rois_tracked_mapped = proposal_list_siamese_non_nms[-1][:, :4].clone()
+        # save mapped boxes
+        if rois_tracked_mapped is not None:
+            mapped_bboxes = rois_tracked_mapped.repeat(1, self.bbox_head.num_classes)
+            if rescale:
+                mapped_bboxes /= img_meta[0]['scale_factor']
+            mapped_bboxes, self.last_det_labels = multiclass(mapped_bboxes, self.last_det_labels)
+            mapped_bbox_results = bbox2result(mapped_bboxes, self.last_det_labels, self.bbox_head.num_classes)
+        else:
+            mapped_bboxes = det_bboxes.new_zeros((0, 5))
+            mapped_labels = det_bboxes.new_zeros((0,), dtype=torch.long)
+            mapped_bbox_results = bbox2result(mapped_bboxes, mapped_labels, self.bbox_head.num_classes)
+        self.add_mapped_bboxes_result(mapped_bbox_results)
+        # merge proposals
+        if proposal_list_siamese is not None and len(proposal_list_siamese) > 0 and len(proposal_list_siamese[0]) > 0:
+            if not out:
+                trk_bbox_result = self.proposals_to_box_result(proposal_list_siamese, self.test_cfg.rcnn)
+            proposal_list_siamese[0][:, -1] = 1
+            len_proposal_det = len(proposal_list[0])
+            proposal_list[0] = torch.cat([proposal_list[0], proposal_list_siamese[0]], dim=0)
+            # ####
+            # nms rpns for both det and track #
+            # proposal_list[0], _ = nms(proposal_list[0], self.test_cfg.merged_rpn.nms_thr)
+            # nms rpns for both det only #
+            _, inds = nms(proposal_list[0], self.test_cfg.merged_rpn.nms_thr)
+            # ####
+            inds = inds[inds < len_proposal_det]
+            proposal_list[0] = torch.cat([proposal_list[0][inds, :], proposal_list_siamese[0]], dim=0)
+            # ####
+        # get all results.
+        if len(proposal_list[0]) > 0:
+            rois = bbox2roi(proposal_list)
+            cls_score, bbox_pred = self.simple_test_rois_scores(x, rois)
+            det_bboxes, det_labels = self.bbox_head.get_det_bboxes(rois,
+                                                                   cls_score,
+                                                                   None,
+                                                                   img_meta[0]['img_shape'],
+                                                                   img_meta[0]['scale_factor'],
+                                                                   rescale=rescale,
+                                                                   cfg=None)
+            det_bboxes = det_bboxes.repeat(1, det_labels.size()[-1])
+            self.last_det_labels = det_labels
+            det_bboxes, det_labels = multiclass(det_bboxes, det_labels)
+            self.update_sequence_list((merged_x, None, None, rois))
+        else:
+            det_bboxes = det_bboxes.new_empty(0, 5)
+            det_labels = det_labels.new_empty(0, 1)
+            self.last_det_labels = None
+            self.update_sequence_list((merged_x, None, None, None))
+        # Timer.toc()
+        bbox_results = bbox2result(det_bboxes, det_labels, self.bbox_head.num_classes)
+
+        if not out:
+            return det_bbox_result, trk_bbox_result, bbox_results
+        else:
+            return bbox_results
 
     def aug_test(self, imgs, img_metas, rescale=False):
         """Test with augmentations.

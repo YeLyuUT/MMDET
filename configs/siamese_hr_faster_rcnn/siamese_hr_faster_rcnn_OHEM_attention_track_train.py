@@ -76,7 +76,13 @@ model = dict(
         reg_class_agnostic=False,
         loss_cls=dict(
             type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0),
-        loss_bbox=dict(type='SmoothL1Loss', beta=1.0, loss_weight=1.0)))
+        loss_bbox=dict(type='SmoothL1Loss', beta=1.0, loss_weight=1.0)),
+    space_time_augmentation=dict(
+        levels = 1,
+        C_in = 480,
+        C_qk = 60,
+        relation_percent=1.0),
+    )
 # model training and testing settings
 train_cfg = dict(
     rpn=dict(
@@ -140,12 +146,7 @@ train_cfg = dict(
         nms_thr=0.7,
         min_bbox_size=0,
         score_threshold=0.0),
-    space_time_augmentation=dict(
-        levels = 1,
-        C_in = 480,
-        C_qk = 60,
-        relation_percent=1.0),
-    )
+    space_time_augmentation=dict(relation_percent=1.0),)
 test_cfg = dict(
     rpn=dict(
         nms_across_levels=False,
@@ -174,11 +175,7 @@ test_cfg = dict(
         min_bbox_size=0),
     rcnn_propose=dict(
         score_thr=0.03, nms=dict(type='nms', iou_thr=0.5), max_per_img=100),
-    space_time_augmentation=dict(
-        levels = 1,
-        C_in = 480,
-        C_qk = 60,
-        relation_percent=0.25),
+    space_time_augmentation=dict(relation_percent=0.5),
     # soft-nms is also supported for rcnn testing
     # e.g., nms=dict(type='soft_nms', iou_thr=0.5, min_score=0.05)
 )
