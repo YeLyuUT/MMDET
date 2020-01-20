@@ -74,7 +74,7 @@ class PointwiseGraphNN(nn.Module):
     value_feat1_5d = torch.index_select(value_feat1_5d, 2, indices)
 
     augmented_features2 = torch.bmm(value_feat1_5d, relation_matrix).view(features2.shape)
-    #augmented_features2 = augmented_features2 + features2
+    augmented_features2 = augmented_features2 + features2
     return augmented_features2
 
 
