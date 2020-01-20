@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import numpy as np
 
 class PointwiseGraphNN(nn.Module):
   # space_time_mem is used to augment the features2
@@ -53,6 +54,7 @@ class PointwiseGraphNN(nn.Module):
     m2 = features2.view(N2, C2, H2*W2)
     # relation_matrix of size (N, T*H1*W1, H2*W2)
     relation_matrix = torch.bmm(m1, m2)
+    relation_matrix = relation_matrix/np.sqrt(C1)
     relation_matrix = self.softmax(relation_matrix)
     return relation_matrix
 
@@ -72,7 +74,7 @@ class PointwiseGraphNN(nn.Module):
     value_feat1_5d = torch.index_select(value_feat1_5d, 2, indices)
 
     augmented_features2 = torch.bmm(value_feat1_5d, relation_matrix).view(features2.shape)
-    augmented_features2 = augmented_features2 * features2
+    #augmented_features2 = augmented_features2 + features2
     return augmented_features2
 
 
