@@ -186,7 +186,7 @@ img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 data = dict(
     imgs_per_gpu=1,
-    workers_per_gpu=2,
+    workers_per_gpu=4,
     train=dict(
         type=dataset_type,
         ann_file=data_root + 'ImageSets/DETVID_train_pair_random_interval.json',
@@ -219,7 +219,7 @@ lr_config = dict(
     warmup='linear',
     warmup_iters=50,
     warmup_ratio=1.0 / 3,
-    step=[2, 3])
+    step=[6, 10])
 checkpoint_config = dict(interval=1)
 # yapf:disable
 log_config = dict(
@@ -230,7 +230,7 @@ log_config = dict(
     ])
 # yapf:enable
 # runtime settings
-total_epochs = 4
+total_epochs = 12
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
 work_dir = './work_dirs/siamese_hr_faster_rcnn_OHEM_DETVID_graphnn'
