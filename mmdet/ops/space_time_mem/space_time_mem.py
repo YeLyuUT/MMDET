@@ -5,26 +5,27 @@ import numpy as np
 class PointwiseGraphNN(nn.Module):
   # space_time_mem is used to augment the features2
   # relation percent 1.0 for training, 0.25 for testing.
-  def __init__(self, C_in, C_qk=None, relation_percent=1.0):
+  def __init__(self, C_in, C_qk=None, relation_percent=1.0, relation_num=1024):
     super(PointwiseGraphNN, self).__init__()
     if C_qk is None:
       C_qk = int(C_in / 8)
 
-    self.query = nn.Conv2d(C_in, C_qk, kernel_size=1)
+    #self.query = nn.Conv2d(C_in, C_qk, kernel_size=1)
     self.key = nn.Conv2d(C_in, C_qk, kernel_size=1)
     self.value = nn.Conv2d(C_in, C_in, kernel_size=1)
     self.C_qk = C_qk
     self.relation_percent = relation_percent
+    self.relation_num = relation_num
     self.softmax = nn.Softmax(dim=1)
     self.init_weights()
     assert relation_percent>0 and relation_percent<=1.0
 
   def init_weights(self):
-    nn.init.normal_(self.query.weight, 0, 0.01)
-    nn.init.constant_(self.query.bias, 0)
-    nn.init.normal_(self.key.weight, 0, 0.01)
+    #nn.init.normal_(self.query.weight, 0, 0.01)
+    #nn.init.constant_(self.query.bias, 0)
+    nn.init.xavier_uniform_(self.key.weight)
     nn.init.constant_(self.key.bias, 0)
-    nn.init.normal_(self.value.weight, 0, 0.01)
+    nn.init.xavier_uniform_(self.value.weight)
     nn.init.constant_(self.value.bias, 0)
 
   def forward(self, space_time_mem, features2):
@@ -37,7 +38,8 @@ class PointwiseGraphNN(nn.Module):
     '''
     T, N, C, H1, W1 = space_time_mem.shape
     space_time_mem_4d = space_time_mem.view(T * N, C, H1, W1)
-    query_feat1 = self.query(space_time_mem_4d)
+    #query_feat1 = self.query(space_time_mem_4d)
+    query_feat1 = self.key(space_time_mem_4d)
     key_feat2 = self.key(features2)
     value_feat1 = self.value(space_time_mem_4d)
     query_feat1_transpose = query_feat1.view(T, N, self.C_qk, H1, W1).permute(1, 2, 0, 3, 4)
