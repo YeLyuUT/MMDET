@@ -7,9 +7,10 @@ from .retina_head import RetinaHead
 from .ga_retina_head import GARetinaHead
 from .ssd_head import SSDHead
 from .siamese_rpn_head import SiameseRPNHead
+from .siam_tracker import SiameseDistRPNHead
 
 __all__ = [
     'AnchorHead', 'GuidedAnchorHead', 'FeatureAdaption', 'RPNHead',
     'GARPNHead', 'RetinaHead', 'GARetinaHead', 'SSDHead', 'FCOSHead',
-    'SiameseRPNHead'
+    'SiameseRPNHead', 'SiameseDistRPNHead'
 ]
