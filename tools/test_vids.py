@@ -14,28 +14,110 @@ from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
 from mmcv.runner import get_dist_info, load_checkpoint
 
 from mmdet.apis import init_dist
-from mmdet.core import coco_eval, results2json, wrap_fp16_model
+from mmdet.core import coco_eval, results2json, wrap_fp16_model, seq_nms
 from mmdet.datasets import build_dataloader, build_dataset
 from mmdet.models import build_detector
+from copy import deepcopy
 
+'''
+def single_gpu_test(model, data_loader, show=False):
+  model.eval()
+  results = []
+  dataset = data_loader.dataset
+  prog_bar = mmcv.ProgressBar(len(dataset))
+  if show:
+    data_list = []
+  for i, data in enumerate(data_loader):
+    with torch.no_grad():
+      result = model(return_loss=False, rescale=not show, out=not show, **data)
+    results.append(result)
+    if show:
+      data_list.append(data)
+    batch_size = data['img'][0].size(0)
+    for _ in range(batch_size):
+      prog_bar.update()
+
+  return results
+'''
+
+def single_gpu_test_seq_track_nms(model, data_loader, show=False):
+  model.eval()
+  results = []
+  dataset = data_loader.dataset
+  prog_bar = mmcv.ProgressBar(len(dataset))
+  if show:
+    data_list = []
+  for i, data in enumerate(data_loader):
+    with torch.no_grad():
+      result = model(return_loss=False, rescale=not show, out=not show, **data)
+    results.append(result)
+    if show:
+      data_list.append(data)
+    batch_size = data['img'][0].size(0)
+    for _ in range(batch_size):
+      prog_bar.update()
+
+  if show:
+    dets = [result[2] for result in results]
+    dets = [list(det) for det in zip(*dets)]
+    dets_mapped = [list(det) for det in zip(*model.module.sequence_mapped_bboxes_result)]
+    dets = seq_nms.seq_nms_with_mapper(dets, dets_mapped)
+    dets = [det for det in zip(*dets)]
+    for idx, (result, det) in enumerate(zip(results, dets)):
+      result = list(result)
+      result.append(det)
+      results[idx] = tuple(result)
+    for i, (data, result) in enumerate(zip(data_list, results)):
+      model.module.show_result(data, result, dataset.img_norm_cfg, im_name=None)
+  else:
+    dets = [list(det) for det in zip(*results)]
+    dets_mapped = [list(det) for det in zip(*model.module.sequence_mapped_bboxes_result)]
+    dets_1 = seq_nms.seq_nms_with_mapper(deepcopy(dets), deepcopy(dets_mapped), IOU_THRESH = 0.5)
+    dets_2 = seq_nms.seq_nms_with_mapper_05(deepcopy(dets), deepcopy(dets_mapped), IOU_THRESH = 0.5)
+    results1 = [det for det in zip(*dets_1)]
+    results2 = [det for det in zip(*dets_2)]
+  return results1, results2
 
 def single_gpu_test(model, data_loader, show=False):
-    model.eval()
-    results = []
-    dataset = data_loader.dataset
-    prog_bar = mmcv.ProgressBar(len(dataset))
-    for i, data in enumerate(data_loader):
-        with torch.no_grad():
-            result = model(return_loss=False, rescale=not show, **data)
-        results.append(result)
+  model.eval()
+  results = []
+  dataset = data_loader.dataset
+  prog_bar = mmcv.ProgressBar(len(dataset))
+  if show:
+    data_list = []
+  for i, data in enumerate(data_loader):
+    with torch.no_grad():
+      result = model(return_loss=False, rescale=not show, out=not show, **data)
+    results.append(result)
+    if show:
+      data_list.append(data)
+    batch_size = data['img'][0].size(0)
+    for _ in range(batch_size):
+      prog_bar.update()
 
-        if show:
-            model.module.show_result(data, result, dataset.img_norm_cfg)
+  if show:
+    dets = [result[2] for result in results]
+    dets = [list(det) for det in zip(*dets)]
+    dets_mapped = [list(det) for det in zip(*model.module.sequence_mapped_bboxes_result)]
+    dets = seq_nms.seq_nms_with_mapper(dets, dets_mapped)
+    dets = [det for det in zip(*dets)]
+    for idx, (result, det) in enumerate(zip(results, dets)):
+      result = list(result)
+      result.append(det)
+      results[idx] = tuple(result)
+    for i, (data, result) in enumerate(zip(data_list, results)):
+      model.module.show_result(data, result, dataset.img_norm_cfg, im_name=None)
+  else:
+    dets = [list(det) for det in zip(*results)]
+    dets_mapped = [list(det) for det in zip(*model.module.sequence_mapped_bboxes_result)]
+    dets_1 = seq_nms.seq_nms_with_mapper(deepcopy(dets), deepcopy(dets_mapped), IOU_THRESH = 0.5)
+    dets_2 = seq_nms.seq_nms(deepcopy(dets))
+    dets_3 = deepcopy(dets)
+    results1 = [det for det in zip(*dets_1)]
+    results2 = [det for det in zip(*dets_2)]
+    results3 = [det for det in zip(*dets_3)]
 
-        batch_size = data['img'][0].size(0)
-        for _ in range(batch_size):
-            prog_bar.update()
-    return results
+  return results1, results2, results3
 
 
 def multi_gpu_test(model, data_loader, tmpdir=None):
@@ -156,6 +238,8 @@ def process_dataset(cfg, cfg_data_test, args,distributed,json_out, args_out):
   if not distributed:
     model = MMDataParallel(model, device_ids=[0])
     outputs = single_gpu_test(model, data_loader, args.show)
+    #outputs = single_gpu_test(model, data_loader, args.show)
+    #outputs = single_gpu_test_seq_track_nms(model, data_loader, args.show)
   else:
     model = MMDistributedDataParallel(model.cuda())
     outputs = multi_gpu_test(model, data_loader, args.tmpdir)
@@ -163,7 +247,10 @@ def process_dataset(cfg, cfg_data_test, args,distributed,json_out, args_out):
   rank, _ = get_dist_info()
   if args_out and rank == 0:
     print('\nwriting results to {}'.format(args_out))
-    mmcv.dump(outputs, args_out)
+    #mmcv.dump(outputs, args_out)
+    mmcv.dump(outputs[0], args_out.replace('.pkl', '_0.pkl'))
+    mmcv.dump(outputs[1], args_out.replace('.pkl', '_1.pkl'))
+    mmcv.dump(outputs[2], args_out.replace('.pkl', '_2.pkl'))
     eval_types = args.eval
     if eval_types:
       print('Starting evaluate {}'.format(' and '.join(eval_types)))
@@ -186,6 +273,7 @@ def process_dataset(cfg, cfg_data_test, args,distributed,json_out, args_out):
   # Save predictions in the COCO json format
   if json_out and rank == 0:
     if not isinstance(outputs[0], dict):
+      print('\nwriting results to {}'.format(json_out))
       results2json(dataset, outputs, json_out)
     else:
       for name in outputs[0]:
@@ -217,6 +305,8 @@ def main():
     # build the dataloader
     # TODO: support multiple images per gpu (only minor changes are needed)
     if osp.isdir(cfg.data.test['ann_file']):
+      json_out = None
+      args_out = None
       if args.json_out:
         json_out = args.json_out
         assert osp.isdir(json_out), 'Directory "{}" does not exists.'.format(json_out)
@@ -229,22 +319,18 @@ def main():
       for i in range(fCounter):
         annfname = osp.join(VID_jsons_dir, '%06d.json'%(i))
         cfg.data.test['ann_file'] = annfname
-        json_out_path = json_out
+        json_out_path = None
         if json_out:
           json_out_path = osp.join(json_out, '%06d' % (i))
-          print(json_out_path)
-        args_out_path = args_out
+        args_out_path = None
         if args_out:
           args_out_path = osp.join(args_out, '%06d.pkl' % (i))
-          print(args_out_path)
         process_dataset(cfg, cfg.data.test, args, distributed, json_out_path, args_out_path)
     else:
       if args.out is not None and not args.out.endswith(('.pkl', '.pickle')):
         raise ValueError('The output file must be a pkl file.')
       if args.json_out is not None and args.json_out.endswith('.json'):
         args.json_out = args.json_out[:-5]
-      print(args.out)
-      print(args.json_out)
       process_dataset(cfg, cfg.data.test, args, distributed, args.json_out, args.out)
 
 if __name__ == '__main__':
