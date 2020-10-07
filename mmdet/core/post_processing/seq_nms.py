@@ -17,7 +17,9 @@ import profile
 import cv2
 import time
 import os
+from copy import deepcopy
 import numpy as np
+from functools import partial
 
 CLASSES = ('airplane', 'antelope', 'bear', 'bicycle', 'bird', 'bus',
            'car', 'cattle', 'dog', 'domestic cat', 'elephant', 'fox',
@@ -25,12 +27,14 @@ CLASSES = ('airplane', 'antelope', 'bear', 'bicycle', 'bird', 'bus',
            'motorcycle', 'rabbit', 'red panda', 'sheep', 'snake', 'squirrel',
            'tiger', 'train', 'turtle', 'watercraft', 'whale', 'zebra')
 
-           
-NMS_THRESH = 0.3
-IOU_THRESH = 0.7
-MAX_THRESH = 1e-2
 
-def createLinksWithMapper(dets_all, mapped_dets_all):
+NMS_THRESH = 0.45
+MAX_THRESH = 1e-2
+MIN_LENGTH = 2
+RESCORE_PERCENTAGE = 0.5
+RESCORE_TOP_N = 20
+
+def createLinksWithMapper(dets_all, mapped_dets_all, IOU_THRESH = 0.5):
     links_all = []
 
     frame_num = len(dets_all[0])
@@ -44,12 +48,10 @@ def createLinksWithMapper(dets_all, mapped_dets_all):
             dets2 = dets_all[cls_ind][frame_ind + 1]
             box1_num = len(dets1)
             box2_num = len(dets2)
-            if frame_ind == 0:
-                areas1 = np.empty(box1_num)
-                for box1_ind, box1 in enumerate(dets1):
-                    areas1[box1_ind] = (box1[2] - box1[0] + 1) * (box1[3] - box1[1] + 1)
-            else:
-                areas1 = areas2
+
+            areas1 = np.empty(box1_num)
+            for box1_ind, box1 in enumerate(dets1):
+                areas1[box1_ind] = (box1[2] - box1[0] + 1) * (box1[3] - box1[1] + 1)
 
             areas2 = np.empty(box2_num)
             for box2_ind, box2 in enumerate(dets2):
@@ -73,7 +75,7 @@ def createLinksWithMapper(dets_all, mapped_dets_all):
         links_all.append(links_cls)
     return links_all
 
-def createLinks(dets_all):
+def createLinks(dets_all, IOU_THRESH = 0.5):
     links_all = []
 
     frame_num = len(dets_all[0])
@@ -114,11 +116,15 @@ def createLinks(dets_all):
         links_all.append(links_cls)
     return links_all
 
-def maxPath(dets_all, links_all):
+# standard
+def rescore(dets, rootindex, maxpath, maxsum):
+    newscore = maxsum / len(maxpath)
+    for i, box_ind in enumerate(maxpath):
+        dets[rootindex + i][box_ind][4] = newscore
 
+def maxPath(dets_all, links_all, rescoreFunc = rescore):
     for cls_ind, links_cls in enumerate(links_all):
 
-        max_begin = time.time()
         delete_sets=[[]for i in range(0,len(dets_all[0]))]
         delete_single_box=[]
         dets_cls = dets_all[cls_ind]
@@ -131,17 +137,16 @@ def maxPath(dets_all, links_all):
                 sum_links+=len(box)
 
         while True:
-
             num_path+=1
 
-            rootindex, maxpath, maxsum = findMaxPath(links_cls, dets_cls,delete_single_box)
+            rootindex, maxpath, maxsum = findMaxPath(links_cls, dets_cls, delete_single_box)
 
             if (maxsum<MAX_THRESH or sum_links==0 or len(maxpath) <1):
                 break
             if (len(maxpath)==1):
                 delete=[rootindex,maxpath[0]]
                 delete_single_box.append(delete)
-            rescore(dets_cls, rootindex, maxpath, maxsum)
+            rescoreFunc(dets_cls, rootindex, maxpath, maxsum)
             t4=time.time()
             delete_set,num_delete=deleteLink(dets_cls, links_cls, rootindex, maxpath, NMS_THRESH)
             num_delete = 0
@@ -208,13 +213,42 @@ def findMaxPath(links,dets,delete_single_box):
     maxpath.reverse()
     return rootindex, maxpath, maxscore
 
-
-def rescore(dets, rootindex, maxpath, maxsum):
-    newscore = maxsum / len(maxpath)
-
+# large percentage
+def rescore_percentage(dets, rootindex, maxpath, maxsum, percentage=RESCORE_PERCENTAGE, use_add=False):
+    scores = []
     for i, box_ind in enumerate(maxpath):
-        dets[rootindex + i][box_ind][4] = newscore
+        scores.append(dets[rootindex + i][box_ind][4])
+    scores = sorted(scores)
+    if percentage<0.9999:
+        if len(scores)>=MIN_LENGTH:
+            length = min(int(len(scores)*percentage)+1, len(scores))
+            newscore = sum(scores[-length:])/length
+        else:
+            newscore = sum(scores)/MIN_LENGTH
+    else:
+        newscore = maxsum / len(maxpath)
+    for i, box_ind in enumerate(maxpath):
+        if use_add:
+            dets[rootindex + i][box_ind][4] = newscore + dets[rootindex + i][box_ind][4]
+        else:
+            dets[rootindex + i][box_ind][4] = newscore
 
+# top N.
+def rescore_top_n(dets, rootindex, maxpath, maxsum, top_n=RESCORE_TOP_N, use_add=False):
+    scores = []
+    for i, box_ind in enumerate(maxpath):
+        scores.append(dets[rootindex + i][box_ind][4])
+    scores = sorted(scores)
+    if len(scores)>=MIN_LENGTH:
+        length = min(top_n, len(scores))
+        newscore = sum(scores[-length:])/length
+    else:
+        newscore = sum(scores) / MIN_LENGTH
+    for i, box_ind in enumerate(maxpath):
+        if use_add:
+            dets[rootindex + i][box_ind][4] = newscore + dets[rootindex + i][box_ind][4]
+        else:
+            dets[rootindex + i][box_ind][4] = newscore
 
 def deleteLink(dets, links, rootindex, maxpath, thesh):
 
@@ -255,12 +289,68 @@ def deleteLink(dets, links, rootindex, maxpath, thesh):
 
     return delete_set,num_delete_links
 
-def seq_nms(dets):
-    links = createLinks(dets)
-    dets=maxPath(dets, links)
-    return dets
-
-def seq_nms_with_mapper(dets, mapped_dets):
-    links = createLinksWithMapper(dets, mapped_dets)
+def seq_nms(dets, IOU_THRESH = 0.5):
+    links = createLinks(dets, IOU_THRESH)
     dets = maxPath(dets, links)
     return dets
+    
+def seq_nms_05(dets, IOU_THRESH = 0.5):
+    links = createLinks(dets, IOU_THRESH)
+    dets = maxPath(dets, links, partial(rescore_percentage, percentage=0.5))
+    return dets
+
+def seq_nms_025(dets, IOU_THRESH = 0.5):
+    links = createLinks(dets, IOU_THRESH)
+    dets = maxPath(dets, links, partial(rescore_percentage, percentage=0.25))
+    return dets
+
+def seq_nms_with_mapper(dets, mapped_dets, IOU_THRESH = 0.5):
+    links = createLinksWithMapper(dets, mapped_dets, IOU_THRESH)
+    dets = maxPath(dets, links)
+    return dets
+    
+def seq_nms_with_mapper_05(dets, mapped_dets, IOU_THRESH = 0.5):
+    links = createLinksWithMapper(dets, mapped_dets, IOU_THRESH)
+    dets = maxPath(dets, links, partial(rescore_percentage, percentage=0.5))
+    return dets
+
+def seq_nms_with_mapper_multiple(dets, mapped_dets):
+    links = createLinksWithMapper(dets, mapped_dets)
+
+    dets_0 = deepcopy(dets)
+    links_0 = deepcopy(links)
+    dets_0 = maxPath(dets_0, links_0, rescore)
+
+    dets_1 = deepcopy(dets)
+    links_1 = deepcopy(links)
+    dets_1 = maxPath(dets_1, links_1, partial(rescore_percentage, percentage=0.25))
+
+    dets_2 = deepcopy(dets)
+    links_2 = deepcopy(links)
+    dets_2 = maxPath(dets_2, links_2, partial(rescore_percentage, percentage=0.5))
+
+    dets_3 = deepcopy(dets)
+    links_3 = deepcopy(links)
+    dets_3 = maxPath(dets_3, links_3, partial(rescore_top_n, top_n=1))
+
+    dets_4 = deepcopy(dets)
+    links_4 = deepcopy(links)
+    dets_4 = maxPath(dets_4, links_4, partial(rescore_top_n, top_n=10))
+
+    dets_5 = deepcopy(dets)
+    links_5 = deepcopy(links)
+    dets_5 = maxPath(dets_5, links_5, partial(rescore_top_n, top_n=20))
+
+    dets_6 = deepcopy(dets)
+    links_6 = deepcopy(links)
+    dets_6 = maxPath(dets_6, links_6, partial(rescore_percentage, percentage=0.25, use_add=True))
+
+    dets_7 = deepcopy(dets)
+    links_7 = deepcopy(links)
+    dets_7 = maxPath(dets_7, links_7, partial(rescore_percentage, percentage=0.5, use_add=True))
+
+    dets_8 = deepcopy(dets)
+    links_8 = deepcopy(links)
+    dets_8 = maxPath(dets_8, links_8, partial(rescore_percentage, percentage=1.0, use_add=True))
+
+    return dets_0, dets_1, dets_2, dets_3, dets_4, dets_5, dets_6, dets_7, dets_8
