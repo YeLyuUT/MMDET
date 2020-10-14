@@ -146,7 +146,7 @@ test_cfg = dict(
         score_threshold=0.5,
     ),
     rcnn=dict(
-        score_thr=0.03, nms=dict(type='nms', iou_thr=0.5), max_per_img=100),
+        score_thr=0.01, nms=dict(type='nms', iou_thr=0.5), max_per_img=100),
     merged_rpn=dict(
         nms_across_levels=False,
         nms_pre=1000,
@@ -155,7 +155,7 @@ test_cfg = dict(
         nms_thr=0.7,
         min_bbox_size=0),
     rcnn_propose=dict(
-        score_thr=0.03, nms=dict(type='nms', iou_thr=0.5), max_per_img=100),
+        score_thr=0.01, nms=dict(type='nms', iou_thr=0.5), max_per_img=100),
     # soft-nms is also supported for rcnn testing
     # e.g., nms=dict(type='soft_nms', iou_thr=0.5, min_score=0.05)
 )
@@ -213,7 +213,7 @@ log_config = dict(
 total_epochs = 4
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
-work_dir = './work_dirs/siamese_faster_rcnn_OHEM_DETVID_dcn_track'
+work_dir = './work_dirs/siamese_faster_rcnn_OHEM_DETVID_dcn_dist_track'
 load_from = './work_dirs/siamese_faster_rcnn_OHEM_DETVID_dcn/epoch_2.pth'
 resume_from = None
 workflow = [('train', 1)]
