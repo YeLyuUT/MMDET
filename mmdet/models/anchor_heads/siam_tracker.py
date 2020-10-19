@@ -25,7 +25,7 @@ def _pairwise_distances(x, y):
     # y: [m, feature_dim].
     # Returns:
     # d: [n, m].
-    if x.ndim==3:
+    if len(x.shape) == 3:
         #N,n,C
         d_list = []
         for _x,_y in zip(x,y):
@@ -139,7 +139,7 @@ class DepthwiseDistRPN(RPN):
         _z_f = z_f.transpose(-1, -2)
         _x_f = x_f.transpose(-1, -2)
         dist = _pairwise_distances(_z_f, _x_f) #(N, n1, n2)
-        assert dist.ndim==3
+        #assert dist.ndim==3
         dist_t, _ = torch.min(dist, dim=1, keepdim=True)
         dist_s, _ = torch.min(dist, dim=2, keepdim=True)
         dist_s = dist_s.transpose(-1, -2)
