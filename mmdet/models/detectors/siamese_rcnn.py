@@ -147,12 +147,12 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
             return self.forward_test(inputs.pop('img', None), inputs.pop('img_meta', None), **inputs)
 
     def freeze_parts(self, network):
-        print('Freezing parameters:{}'.format(network.parameters()))
+        #print('Freezing parameters:{}'.format(network.parameters()))
         for param in network.parameters():
             param.requires_grad = False
 
     def unfreeze_parts(self, network):
-        print('UnFreezing parameters:{}'.format(network.parameters()))
+        #print('UnFreezing parameters:{}'.format(network.parameters()))
         for param in network.parameters():
             param.requires_grad = True
 
@@ -1065,8 +1065,13 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
         #Timer = clock()
         #Timer.tic()
         x = self.extract_feat(img)
+        #Timer.toc('backbone')
+        #Timer.tic()
         proposal_list_raw = self.simple_test_rpn(x, img_meta, self.test_cfg.rpn) if proposals is None else proposals
+        #Timer.toc('rpn')
+        #Timer.tic()
         det_bboxes, det_labels = self.simple_test_bboxes(x, img_meta, proposal_list_raw, None, rescale=False)
+        #Timer.toc('det')
         # prune proposals.
         proposal_threshold = self.test_cfg.rcnn_propose.score_thr
         det_bboxes = det_bboxes[:, 4:].contiguous()
@@ -1095,7 +1100,9 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
         else:
             merged_x = x
         if self.sequence_buffer is not None and len(self.sequence_buffer) > 0 and self.sequence_buffer[-1][-1] is not None:
+            #Timer.tic()
             proposal_list_siamese, proposal_list_siamese_non_nms = self.multi_track_with_non_nms_proposals(merged_x, img_meta, self.test_cfg.siameserpn, max_gap=self.multi_track_max_gap)
+            #Timer.toc('tracker')
             rois_tracked_mapped = proposal_list_siamese_non_nms[-1][:,:4].clone()
         # save mapped boxes
         if rois_tracked_mapped is not None:
@@ -1196,7 +1203,7 @@ class SiameseRCNN(TwoStageDetector, SiameseRPNTestMixin):
 
         det_bboxes, det_labels = self.simple_test_bboxes(x, img_meta, proposal_list, self.test_cfg.rcnn, rescale=rescale)
         #Timer.toc('rcnn')
-        bbox_results = bbox2result(det_bboxes, det_labels,self.bbox_head.num_classes)
+        bbox_results = bbox2result(det_bboxes, det_labels, self.bbox_head.num_classes)
         #Timer.toc('box2result')
 
         if not self.with_mask:
