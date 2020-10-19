@@ -149,9 +149,12 @@ def maxPath(dets_all, links_all, rescoreFunc = rescore):
             rescoreFunc(dets_cls, rootindex, maxpath, maxsum)
             t4=time.time()
             delete_set,num_delete=deleteLink(dets_cls, links_cls, rootindex, maxpath, NMS_THRESH)
-            num_delete = 0
             sum_links-=num_delete
             for i, box_ind in enumerate(maxpath):
+                if box_ind not in delete_set[i]:
+                    print('warning,', box_ind, 'not in delete_set',i, delete_set[i])
+                else:
+                    pass
                 delete_set[i].remove(box_ind)
                 delete_single_box.append([[rootindex+i],box_ind])
                 for j in delete_set[i]:
