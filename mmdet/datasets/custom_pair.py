@@ -68,7 +68,8 @@ class CustomPairDataset(Dataset):
                  resize_keep_ratio=True,
                  skip_img_without_anno=True,
                  test_mode=False,
-                 reverse_ratio=0.):
+                 reverse_ratio=0.,
+                 half_classes_only = False):
         # prefix of images path
         self.img_prefix = img_prefix
 
@@ -145,6 +146,7 @@ class CustomPairDataset(Dataset):
         self.skip_img_without_anno = skip_img_without_anno
 
         self.reverse_ratio = reverse_ratio
+        self.half_classes_only = half_classes_only
 
     def __len__(self):
         return len(self.img_infos)
@@ -239,6 +241,9 @@ class CustomPairDataset(Dataset):
         if len(gt_bboxes1) == 0 and self.skip_img_without_anno:
             warnings.warn('Skip the image "%s" that has no valid gt bbox' %
                           osp.join(self.img_prefix, img_info['filename1']))
+            return None
+
+        if self.half_classes_only and (gt_bboxes1>15).all():
             return None
 
         # extra augmentation
